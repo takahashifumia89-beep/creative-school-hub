@@ -1,4 +1,4 @@
-# Creative School
+ #  Creative  School
 
 React + Vite (интерфейс) и Cloudflare Worker (API) с базой Cloudflare D1 (это SQLite).
 От Replit ничего не зависит. Секретов в коде нет: пароли хранятся как PBKDF2-хеши, сессии — как хеши токенов в D1.
