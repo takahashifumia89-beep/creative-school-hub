@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
-import { FolderKanban, LoaderCircle, Plus, Upload, X } from 'lucide-react';
+import { EyeOff, FolderKanban, LoaderCircle, Pencil, Plus, Trash2, Upload, X } from 'lucide-react';
+import { Link } from 'wouter';
 import { PageIntro } from '@/features/shared/PageIntro';
 import { getCurrentUser, type Project } from '@/lib/api';
-import { createProject, fetchProjects, updateProject } from '@/lib/api';
+import { createProject, deleteProject, fetchProjects, updateProject } from '@/lib/api';
+
+const studioHref = (p: Project) => (p.category === '3D и моделирование' ? `/studio/3d?project=${p.id}` : p.category === 'Дизайн' ? `/studio/design?project=${p.id}` : null);
 
 export function ProjectsPage({ onToast }: { onToast: (text: string) => void }) {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -41,10 +44,11 @@ export function ProjectsPage({ onToast }: { onToast: (text: string) => void }) {
     setTitle('');
     setDescription('');
     setShowForm(false);
-    onToast('Проект сохранён на этом устройстве.');
+    onToast('Проект сохранён как черновик.');
   }
 
   async function publish(project: Project) {
+    if (!window.confirm('Опубликовать проект в портфолио? Его смогут увидеть другие.')) return;
     const result = await updateProject(project.id, { status: 'published', visibility: 'public' });
     if (result.error || !result.data) {
       onToast(result.error ?? 'Не удалось опубликовать проект.');
@@ -52,6 +56,21 @@ export function ProjectsPage({ onToast }: { onToast: (text: string) => void }) {
     }
     setProjects((current) => current.map((item) => item.id === project.id ? result.data as Project : item));
     onToast('Проект опубликован в портфолио.');
+  }
+
+  async function unpublish(project: Project) {
+    const result = await updateProject(project.id, { status: 'draft', visibility: 'private' });
+    if (result.error || !result.data) { onToast(result.error ?? 'Не удалось снять с публикации.'); return; }
+    setProjects((current) => current.map((item) => item.id === project.id ? result.data as Project : item));
+    onToast('Проект снова черновик.');
+  }
+
+  async function remove(project: Project) {
+    if (!window.confirm(`Удалить проект «${project.title}»? Это нельзя отменить.`)) return;
+    const result = await deleteProject(project.id);
+    if (result.error) { onToast(result.error); return; }
+    setProjects((current) => current.filter((item) => item.id !== project.id));
+    onToast('Проект удалён.');
   }
 
   return (
@@ -78,14 +97,14 @@ export function ProjectsPage({ onToast }: { onToast: (text: string) => void }) {
       {error && <div className="mb-5 rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-xs text-destructive">{error}</div>}
       {projects.length === 0 && !error ? (
         <div className="grid min-h-[300px] place-items-center rounded-2xl border border-dashed border-border bg-card/50 p-8 text-center">
-          <div><FolderKanban className="mx-auto text-primary" size={22} /><h2 className="mt-5 font-display text-2xl tracking-[-.05em]">Создайте свой первый проект.</h2><p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">Сохраните идею как черновик, а когда она будет готова — опубликуйте в портфолио. Данные останутся в браузере этого устройства.</p></div>
+          <div><FolderKanban className="mx-auto text-primary" size={22} /><h2 className="mt-5 font-display text-2xl tracking-[-.05em]">Создайте свой первый проект.</h2><p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">Сохраните идею как черновик, а когда она будет готова — опубликуйте в портфолио. Данные хранятся в вашем аккаунте.</p></div>
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {projects.map((project, index) => (
             <article key={project.id} className="overflow-hidden rounded-2xl border border-border bg-card">
               <div className={`relative h-52 overflow-hidden ${index % 3 === 0 ? 'bg-secondary/60' : index % 3 === 1 ? 'bg-accent/55' : 'bg-primary/55'}`}><div className="absolute inset-5 border border-foreground/20" /><span className="absolute left-5 top-5 rounded-full bg-background/70 px-2 py-1 font-mono-ui text-[9px] uppercase">{project.visibility === 'public' ? 'Открытый' : project.visibility === 'private' ? 'Личный' : 'По ссылке'}</span><span className="absolute bottom-5 left-5 font-mono-ui text-[10px] uppercase tracking-widest opacity-70">Проект / 0{index + 1}</span></div>
-              <div className="p-5"><h2 className="font-display text-2xl leading-[.95] tracking-[-.05em]">{project.title}</h2><p className="mt-3 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{project.description || 'Описания пока нет.'}</p><div className="mt-5 flex items-center justify-between border-t border-border pt-4"><span className="font-mono-ui text-[10px] uppercase tracking-wider text-muted-foreground">{project.status === 'published' ? 'Опубликован' : 'Черновик'}</span>{project.status !== 'published' && <button onClick={() => void publish(project)} aria-label="Опубликовать проект" className="rounded-md p-2 text-primary hover:bg-primary/15"><Upload size={14} /></button>}</div></div>
+              <div className="p-5"><h2 className="font-display text-2xl leading-[.95] tracking-[-.05em]">{project.title}</h2><p className="mt-3 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{project.description || 'Описания пока нет.'}</p><div className="mt-5 flex items-center justify-between border-t border-border pt-4"><span className="font-mono-ui text-[10px] uppercase tracking-wider text-muted-foreground">{project.status === 'published' ? 'Опубликован' : 'Черновик'}</span><div className="flex items-center">{studioHref(project) && <Link href={studioHref(project) as string} aria-label="Открыть в студии" className="rounded-md p-2 hover:bg-muted"><Pencil size={14} /></Link>}{project.status === 'published' ? <button onClick={() => void unpublish(project)} aria-label="Снять с публикации" className="rounded-md p-2 hover:bg-muted"><EyeOff size={14} /></button> : <button onClick={() => void publish(project)} aria-label="Опубликовать проект" className="rounded-md p-2 text-primary hover:bg-primary/15"><Upload size={14} /></button>}<button onClick={() => void remove(project)} aria-label="Удалить проект" className="rounded-md p-2 text-destructive hover:bg-destructive/10"><Trash2 size={14} /></button></div></div></div>
             </article>
           ))}
         </div>
