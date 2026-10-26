@@ -14,7 +14,8 @@ import { OnboardingPage } from '@/features/onboarding/OnboardingPage';
 import { ProjectsPage } from '@/features/projects/ProjectsPage';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
 import { LearningPage } from '@/features/learn/LearningPage';
-import { AchievementsPage, LandingPage, MarketplacePage, PortfolioPage, StudioPage } from '@/features/shared/RussianPages';
+import { AchievementsPage, LandingPage, MarketplacePage, PortfolioPage } from '@/features/shared/RussianPages';
+import { StudioPage } from '@/features/studio/StudioPage';
 import { fetchStats, getCurrentUser, onAuthChange, signOut, type Stats } from '@/lib/api';
 
 const queryClient = new QueryClient();
