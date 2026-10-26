@@ -90,6 +90,9 @@ async function stats(env: Env, userId: string) {
   };
 }
 
+const PROJECT_COLS = 'id, owner_id, title, description, cover_url, category, status, visibility, created_at, updated_at';
+const MAX_CONTENT = 200_000;
+
 async function route(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, '');
@@ -161,15 +164,16 @@ async function route(req: Request, env: Env): Promise<Response> {
   }
 
   if (path === '/api/projects' && method === 'GET') {
-    const { results } = await env.DB.prepare('SELECT * FROM projects WHERE owner_id = ? ORDER BY updated_at DESC').bind(user.id).all<Json>();
+    const { results } = await env.DB.prepare(`SELECT ${PROJECT_COLS} FROM projects WHERE owner_id = ? ORDER BY updated_at DESC`).bind(user.id).all<Json>();
     return json(results);
   }
   if (path === '/api/projects' && method === 'POST') {
     const title = text(body.title, 120);
     if (!title) return fail('Укажите название проекта.');
+    const content = typeof body.content === 'string' && body.content.length <= MAX_CONTENT ? body.content : null;
     const p = { id: crypto.randomUUID(), owner_id: user.id, title, description: text(body.description, 1000), category: text(body.category, 40), status: 'draft', visibility: 'private', cover_url: null, created_at: now(), updated_at: now() };
-    await env.DB.prepare('INSERT INTO projects (id, owner_id, title, description, category, status, visibility, cover_url, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
-      .bind(p.id, p.owner_id, p.title, p.description, p.category, p.status, p.visibility, p.cover_url, p.created_at, p.updated_at).run();
+    await env.DB.prepare('INSERT INTO projects (id, owner_id, title, description, category, status, visibility, cover_url, created_at, updated_at, content) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+      .bind(p.id, p.owner_id, p.title, p.description, p.category, p.status, p.visibility, p.cover_url, p.created_at, p.updated_at, content).run();
     const today = await env.DB.prepare("SELECT COUNT(*) AS n FROM xp_events WHERE user_id = ? AND kind = 'project' AND day = ?").bind(user.id, dayKey()).first<{ n: number }>();
     if ((today?.n ?? 0) < 5) await award(env, user.id, 'project', `project:${p.id}`); // не больше 5 проектов в сутки дают XP
     return json(p, 201);
@@ -182,11 +186,23 @@ async function route(req: Request, env: Env): Promise<Response> {
     if ('category' in body) { sets.push('category = ?'); vals.push(text(body.category, 40)); }
     if (['draft', 'published', 'archived'].includes(body.status as string)) { sets.push('status = ?'); vals.push(body.status); }
     if (['private', 'unlisted', 'public'].includes(body.visibility as string)) { sets.push('visibility = ?'); vals.push(body.visibility); }
+    if ('content' in body) {
+      if (typeof body.content !== 'string' || body.content.length > MAX_CONTENT) return fail('Файл проекта слишком большой.');
+      sets.push('content = ?'); vals.push(body.content);
+    }
     if (!sets.length) return fail('Нечего обновлять.');
     const res = await env.DB.prepare(`UPDATE projects SET ${sets.join(', ')}, updated_at = ? WHERE id = ? AND owner_id = ?`).bind(...vals, now(), pm[1], user.id).run();
     if (!res.meta.changes) return fail('Проект не найден.', 404);
     if (body.status === 'published') await award(env, user.id, 'publish', pm[1]);
-    return json(await env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(pm[1]).first<Json>());
+    return json(await env.DB.prepare(`SELECT ${PROJECT_COLS} FROM projects WHERE id = ?`).bind(pm[1]).first<Json>());
+  }
+  if (pm && method === 'GET') {
+    const r = await env.DB.prepare('SELECT * FROM projects WHERE id = ? AND owner_id = ?').bind(pm[1], user.id).first<Json>();
+    return r ? json(r) : fail('Проект не найден.', 404);
+  }
+  if (pm && method === 'DELETE') {
+    const res = await env.DB.prepare('DELETE FROM projects WHERE id = ? AND owner_id = ?').bind(pm[1], user.id).run();
+    return res.meta.changes ? json({ ok: true }) : fail('Проект не найден.', 404);
   }
 
   if (path === '/api/stats' && method === 'GET') return json(await stats(env, user.id));
