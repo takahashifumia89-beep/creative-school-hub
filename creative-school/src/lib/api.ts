@@ -8,7 +8,7 @@ export type Profile = {
 export type Project = {
   id: string; owner_id: string; title: string; description: string | null;
   status: 'draft' | 'published' | 'archived' | 'blocked'; visibility: 'private' | 'unlisted' | 'public';
-  cover_url: string | null; category: string | null; created_at: string; updated_at: string;
+  cover_url: string | null; category: string | null; created_at: string; updated_at: string; content?: string | null;
 };
 export type AppNotification = {
   id: string; user_id: string;
@@ -90,13 +90,13 @@ export async function fetchProjects(_userId: string) {
   const r = await request<Project[]>('/projects');
   return { data: r.data ?? [], error: r.error };
 }
-export async function createProject(_userId: string, values: Pick<Project, 'title' | 'description' | 'category'>) {
+export async function createProject(_userId: string, values: Pick<Project, 'title' | 'description' | 'category' | 'content'>) {
   const r = await request<Project>('/projects', 'POST', values);
   return { data: r.data, error: r.error };
 }
 export async function updateProject(
   projectId: string,
-  values: Partial<Pick<Project, 'title' | 'description' | 'category' | 'status' | 'visibility'>>,
+  values: Partial<Pick<Project, 'title' | 'description' | 'category' | 'status' | 'visibility' | 'content'>>,
 ) {
   const r = await request<Project>(`/projects/${projectId}`, 'PATCH', values);
   return { data: r.data, error: r.error };
@@ -121,4 +121,13 @@ export async function fetchStats() {
 export async function markPractice() {
   const r = await request<{ awarded: boolean; xp: number }>('/practice', 'POST', {});
   return { awarded: r.data?.awarded ?? false, xp: r.data?.xp ?? 0, error: r.error };
+}
+
+export async function getProject(projectId: string) {
+  const r = await request<Project>(`/projects/${projectId}`);
+  return { data: r.data, error: r.error };
+}
+export async function deleteProject(projectId: string) {
+  const r = await request(`/projects/${projectId}`, 'DELETE', {});
+  return { error: r.error };
 }
