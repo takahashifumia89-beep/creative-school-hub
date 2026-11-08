@@ -3,6 +3,10 @@ import { ArrowLeft, ArrowRight, Box, Check, Clock, ExternalLink, Film, Lightbulb
 import { PageIntro } from '@/features/shared/PageIntro';
 import { completeLesson, fetchProgress, getCurrentUser } from '@/lib/api';
 import { courses, type Course, type Lesson } from './courses';
+import { extraQuiz } from './courses-extra';
+
+const LOCAL = 'cs-progress';
+const readLocal = (): string[] => { try { return JSON.parse(localStorage.getItem(LOCAL) ?? '[]') as string[]; } catch { return []; } };
 
 const icons = { palette: Palette, box: Box, lightbulb: Lightbulb, film: Film };
 const categories = ['Все темы', 'Дизайн', '3D и движение', 'Карьера', 'Арт-дирекшн'];
@@ -12,8 +16,9 @@ function LessonView({ course, lesson, index, done, onBack, onOpen, onFinish }: {
   course: Course; lesson: Lesson; index: number; done: boolean;
   onBack: () => void; onOpen: (id: string) => void; onFinish: () => void;
 }) {
-  const [picked, setPicked] = useState<number | null>(null);
-  const correct = picked === lesson.quiz.a;
+  const qs = [lesson.quiz, ...(extraQuiz[lesson.id] ?? [])];
+  const [picks, setPicks] = useState<(number | null)[]>(() => qs.map(() => null));
+  const correct = qs.every((q, i) => picks[i] === q.a);
   const prev = course.lessons[index - 1], next = course.lessons[index + 1];
   return (
     <div className="mx-auto max-w-[820px] px-5 py-8 sm:px-8 lg:py-10">
@@ -30,13 +35,17 @@ function LessonView({ course, lesson, index, done, onBack, onOpen, onFinish }: {
       {lesson.src && <a href={lesson.src.url} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-2 text-xs text-primary underline"><ExternalLink size={12} /> {lesson.src.label}</a>}
       <div className="mt-8 rounded-2xl border border-border bg-card p-5">
         <div className="font-mono-ui text-[10px] uppercase tracking-widest text-muted-foreground">Проверка</div>
-        <h2 className="mt-2 font-display text-xl">{lesson.quiz.q}</h2>
-        <div className="mt-4 grid gap-2">
-          {lesson.quiz.o.map((option, i) => (
-            <button key={option} onClick={() => setPicked(i)} className={`rounded-xl border px-4 py-3 text-left text-sm ${picked === i ? (i === lesson.quiz.a ? 'border-green-600 bg-green-600/10' : 'border-destructive bg-destructive/10') : 'border-border hover:border-primary'}`}>{option}</button>
-          ))}
-        </div>
-        {picked !== null && !correct && <p className="mt-3 text-xs text-destructive">Не совсем. Перечитайте урок и попробуйте ещё раз.</p>}
+        {qs.map((qz, qi) => (
+          <div key={qz.q} className="mt-4">
+            <h2 className="font-display text-lg">{qi + 1}. {qz.q}</h2>
+            <div className="mt-3 grid gap-2">
+              {qz.o.map((option, i) => (
+                <button key={option} onClick={() => setPicks((p) => p.map((v, k) => (k === qi ? i : v)))} className={`rounded-xl border px-4 py-3 text-left text-sm ${picks[qi] === i ? (i === qz.a ? 'border-green-600 bg-green-600/10' : 'border-destructive bg-destructive/10') : 'border-border hover:border-primary'}`}>{option}</button>
+              ))}
+            </div>
+          </div>
+        ))}
+        {picks.some((p, i) => p !== null && p !== qs[i].a) && <p className="mt-3 text-xs text-destructive">Не совсем. Перечитайте урок и попробуйте ещё раз.</p>}
         {done
           ? <p className="mt-4 flex items-center gap-2 text-xs font-semibold text-green-600"><Check size={14} /> Урок пройден</p>
           : <button disabled={!correct} onClick={onFinish} className="mt-4 rounded-full bg-primary px-5 py-2.5 text-xs font-semibold text-primary-foreground disabled:opacity-40">Завершить урок · +10 XP</button>}
@@ -57,7 +66,8 @@ export function LearningPage({ onToast }: { onToast: (text: string) => void }) {
   const [lessonId, setLessonId] = useState<string | null>(null);
 
   useEffect(() => {
-    void getCurrentUser().then(({ user }) => { if (user) void fetchProgress().then((r) => setDone(r.done)); });
+    setDone(readLocal());
+    void getCurrentUser().then(({ user }) => { if (user) void fetchProgress().then((r) => { if (!r.error) setDone([...new Set([...r.done, ...readLocal()])]); }); });
   }, []);
 
   const visible = useMemo(() => courses.filter((c) =>
@@ -69,7 +79,13 @@ export function LearningPage({ onToast }: { onToast: (text: string) => void }) {
 
   async function finish(c: Course, l: Lesson) {
     const r = await completeLesson(l.id);
-    if (r.error || !r.done) { onToast(r.error ?? 'Не удалось сохранить прогресс.'); return; }
+    if (r.error || !r.done) {
+      const local = [...new Set([...readLocal(), l.id])];
+      try { localStorage.setItem(LOCAL, JSON.stringify(local)); } catch { /* ignore */ }
+      setDone((d) => [...new Set([...d, l.id])]);
+      onToast('Сервер недоступен: урок сохранён на этом устройстве.');
+      return;
+    }
     setDone(r.done);
     const finished = c.lessons.every((x) => r.done?.includes(x.id));
     onToast(finished && r.xp >= 60 ? `Курс пройден! +${r.xp} XP.` : r.xp > 0 ? `Урок пройден: +${r.xp} XP.` : 'Урок уже засчитан.');
