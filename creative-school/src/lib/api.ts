@@ -131,3 +131,12 @@ export async function deleteProject(projectId: string) {
   const r = await request(`/projects/${projectId}`, 'DELETE', {});
   return { error: r.error };
 }
+
+export async function fetchProgress() {
+  const r = await request<{ done: string[] }>('/progress');
+  return { done: r.data?.done ?? [], error: r.error };
+}
+export async function completeLesson(lessonId: string) {
+  const r = await request<{ done: string[]; xp: number }>('/progress', 'POST', { lessonId });
+  return { done: r.data?.done ?? null, xp: r.data?.xp ?? 0, error: r.error };
+}
