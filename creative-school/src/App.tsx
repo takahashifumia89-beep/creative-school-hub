@@ -14,8 +14,10 @@ import { OnboardingPage } from '@/features/onboarding/OnboardingPage';
 import { ProjectsPage } from '@/features/projects/ProjectsPage';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
 import { LearningPage } from '@/features/learn/LearningPage';
-import { AchievementsPage, LandingPage, MarketplacePage, PortfolioPage } from '@/features/shared/RussianPages';
+import { LandingPage, MarketplacePage, PortfolioPage, } from '@/features/shared/RussianPages';
 import { StudioPage } from '@/features/studio/StudioPage';
+import { AchievementsPage } from '@/features/achievements/AchievementsPage';
+import { LangToggle } from '@/lib/i18n';
 import { fetchStats, getCurrentUser, onAuthChange, signOut, type Stats } from '@/lib/api';
 
 const queryClient = new QueryClient();
@@ -148,7 +150,7 @@ function App() {
     <Route path="/admin">{() => <RoleGate role="admin"><Admin /></RoleGate>}</Route>
     <Route>{() => <div className="grid min-h-[100dvh] place-items-center bg-background p-6 text-center"><div><div className="font-mono-ui text-[10px] uppercase tracking-widest text-primary">404 / не та страница</div><h1 className="mt-4 font-display text-5xl tracking-[-.08em]">Продолжим искать.</h1><Link href="/dashboard" className="mt-6 inline-block rounded-full bg-primary px-5 py-3 text-xs font-semibold text-primary-foreground">Вернуться в пространство</Link></div></div>}</Route>
   </Switch></RoutedErrorBoundary>;
-  return <QueryClientProvider client={queryClient}><TooltipProvider>{publicRoute ? content : location === '/onboarding' ? <AuthGate>{content}</AuthGate> : <AuthGate><AppShell isDark={isDark} onToggle={toggleTheme} onToast={notify}>{content}</AppShell></AuthGate>}<Toaster />{toast && <div data-testid="status-toast" className="fixed bottom-5 left-1/2 z-50 flex max-w-[calc(100%-32px)] -translate-x-1/2 items-center gap-3 rounded-full border border-border bg-foreground px-4 py-3 text-xs text-background shadow-xl animate-rise"><CircleCheck size={15} className="shrink-0 text-primary" />{toast}</div>}</TooltipProvider></QueryClientProvider>;
+  return <QueryClientProvider client={queryClient}><TooltipProvider>{publicRoute ? content : location === '/onboarding' ? <AuthGate>{content}</AuthGate> : <AuthGate><AppShell isDark={isDark} onToggle={toggleTheme} onToast={notify}>{content}</AppShell></AuthGate>}<Toaster /><LangToggle />{toast && <div data-testid="status-toast" className="fixed bottom-5 left-1/2 z-50 flex max-w-[calc(100%-32px)] -translate-x-1/2 items-center gap-3 rounded-full border border-border bg-foreground px-4 py-3 text-xs text-background shadow-xl animate-rise"><CircleCheck size={15} className="shrink-0 text-primary" />{toast}</div>}</TooltipProvider></QueryClientProvider>;
 }
 
 export default App;
