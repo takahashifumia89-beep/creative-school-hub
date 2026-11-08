@@ -1,4 +1,6 @@
 // Cloudflare Worker: API для Creative School. Данные — в D1 (SQLite), секретов в коде нет.
+import { courses } from '../src/features/learn/courses';
+
 interface Env { DB: D1Database }
 type Json = Record<string, unknown>;
 
@@ -53,7 +55,8 @@ const profileOut = (r: Json) => ({ ...r, onboarding_completed: Boolean(r.onboard
 const notificationOut = (r: Json) => ({ ...r, read: Boolean(r.read) });
 
 // ---- Очки опыта, уровни, ритм недели (всё считает сервер; каждое начисление записано в xp_events один раз)
-const XP = { daily: 5, practice: 15, project: 20, publish: 50, onboarding: 30 } as const;
+const XP = { daily: 5, practice: 15, project: 20, publish: 50, onboarding: 30, lesson: 10, course: 50 } as const;
+const LESSON_COURSE = new Map(courses.flatMap((c) => c.lessons.map((l) => [l.id, c.id] as const)));
 const WEEK_GOAL = 5;
 const levelOf = (xp: number) => Math.floor(Math.sqrt(xp / 100)) + 1; // уровень N начинается с 100·(N−1)² XP
 const dayKey = (ms = Date.now()) => new Date(ms + 5 * 3_600_000).toISOString().slice(0, 10); // сутки по UTC+5 (Казахстан)
@@ -209,6 +212,26 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (path === '/api/practice' && method === 'POST') {
     const awarded = await award(env, user.id, 'practice', `practice:${dayKey()}`);
     return json({ awarded, xp: XP.practice });
+  }
+
+  if (path === '/api/progress' && method === 'GET') {
+    const { results } = await env.DB.prepare('SELECT lesson_id FROM lesson_progress WHERE user_id = ?').bind(user.id).all<{ lesson_id: string }>();
+    return json({ done: results.map((r) => r.lesson_id) });
+  }
+  if (path === '/api/progress' && method === 'POST') {
+    const lessonId = typeof body.lessonId === 'string' ? body.lessonId : '';
+    const courseId = LESSON_COURSE.get(lessonId);
+    if (!courseId) return fail('Урок не найден.', 404);
+    const ins = await env.DB.prepare('INSERT OR IGNORE INTO lesson_progress (user_id, lesson_id, course_id, completed_at) VALUES (?,?,?,?)').bind(user.id, lessonId, courseId, now()).run();
+    let xp = 0;
+    if (ins.meta.changes) {
+      if (await award(env, user.id, 'lesson', lessonId)) xp += XP.lesson;
+      const total = courses.find((c) => c.id === courseId)?.lessons.length ?? 0;
+      const cnt = await env.DB.prepare('SELECT COUNT(*) AS n FROM lesson_progress WHERE user_id = ? AND course_id = ?').bind(user.id, courseId).first<{ n: number }>();
+      if (total > 0 && (cnt?.n ?? 0) >= total && (await award(env, user.id, 'course', courseId))) xp += XP.course;
+    }
+    const { results } = await env.DB.prepare('SELECT lesson_id FROM lesson_progress WHERE user_id = ?').bind(user.id).all<{ lesson_id: string }>();
+    return json({ done: results.map((r) => r.lesson_id), xp });
   }
 
   if (path === '/api/notifications' && method === 'GET') {
