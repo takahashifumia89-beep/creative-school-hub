@@ -1,253 +1,696 @@
-// Cloudflare Worker: API для Creative School. Данные — в D1 (SQLite), секретов в коде нет.
-import { courseLessons } from '../src/features/learn/courseIndex';
-
-interface Env { DB: D1Database }
-type Json = Record<string, unknown>;
-
-const enc = new TextEncoder();
-const COOKIE = 'cs_session';
-const SESSION_DAYS = 30;
-const PBKDF2_ITERATIONS = 100_000; // максимум, который разрешает Workers
-
-const hex = (buf: ArrayBuffer | Uint8Array) => Array.from(new Uint8Array(buf as ArrayBuffer), (b) => b.toString(16).padStart(2, '0')).join('');
-const fromHex = (s: string) => new Uint8Array((s.match(/.{1,2}/g) ?? []).map((h) => parseInt(h, 16)));
-const sha256 = async (s: string) => hex(await crypto.subtle.digest('SHA-256', enc.encode(s)));
-const now = () => new Date().toISOString();
-
-async function pbkdf2(password: string, salt: Uint8Array): Promise<string> {
-  const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
-  return hex(await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' }, key, 256));
+import { curriculum, lessonMap } from "../src/platform/curriculum";
+import { kinds, validDocument, type ProjectKind } from "../src/platform/schema";
+interface Env {
+  DB: D1Database;
 }
-function safeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+type Row = Record<string, unknown>;
+const encoder = new TextEncoder();
+const hex = (b: ArrayBuffer | Uint8Array) =>
+  Array.from(new Uint8Array(b), (v) => v.toString(16).padStart(2, "0")).join(
+    "",
+  );
+const hash = async (s: string) =>
+  hex(await crypto.subtle.digest("SHA-256", encoder.encode(s)));
+const now = () => new Date().toISOString();
+const day = () => new Date(Date.now() + 18000000).toISOString().slice(0, 10);
+const text = (v: unknown, max: number) =>
+  typeof v === "string" && v.trim().length <= max ? v.trim() : "";
+const json = (data: unknown, status = 200, headers: HeadersInit = {}) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+      ...headers,
+    },
+  });
+const fail = (error: string, status = 400) => json({ error }, status);
+const cookie = (token: string, seconds = 2592000) =>
+  `cs_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${seconds}`;
+const tokenFrom = (r: Request) =>
+  (r.headers.get("Cookie") ?? "").match(
+    /(?:^|;\s*)cs_session=([a-f0-9]{64})(?:;|$)/,
+  )?.[1];
+async function passwordHash(password: string, salt: string) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  return hex(
+    await crypto.subtle.deriveBits(
+      {
+        name: "PBKDF2",
+        salt: encoder.encode(salt),
+        iterations: 100000,
+        hash: "SHA-256",
+      },
+      key,
+      256,
+    ),
+  );
+}
+// Legacy salts were decoded bytes. Keep existing accounts working through a version prefix.
+async function verify(password: string, salt: string, expected: string) {
+  const bytes = salt.startsWith("v2:")
+    ? encoder.encode(salt)
+    : new Uint8Array((salt.match(/../g) ?? []).map((v) => parseInt(v, 16)));
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const actual = hex(
+    await crypto.subtle.deriveBits(
+      { name: "PBKDF2", salt: bytes, iterations: 100000, hash: "SHA-256" },
+      key,
+      256,
+    ),
+  );
+  let diff = actual.length ^ expected.length;
+  for (let i = 0; i < actual.length; i++)
+    diff |= actual.charCodeAt(i) ^ (expected.charCodeAt(i) || 0);
   return diff === 0;
 }
-function json(data: unknown, status = 200, headers: HeadersInit = {}): Response {
-  return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers } });
-}
-const fail = (error: string, status = 400) => json({ error }, status);
-const text = (v: unknown, max: number): string | null => (typeof v === 'string' && v.trim().length > 0 && v.trim().length <= max ? v.trim() : null);
-
-function cookie(token: string, maxAge: number) {
-  return `${COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
-}
-async function currentUser(req: Request, env: Env) {
-  const m = (req.headers.get('Cookie') ?? '').match(new RegExp(`(?:^|;\\s*)${COOKIE}=([a-f0-9]{64})`));
-  if (!m) return null;
-  return env.DB.prepare(
-    'SELECT u.id, u.email, u.display_name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?',
-  ).bind(await sha256(m[1]), Date.now()).first<{ id: string; email: string; display_name: string }>();
-}
-async function startSession(env: Env, userId: string): Promise<string> {
+async function session(db: D1Database, uid: string) {
   const token = hex(crypto.getRandomValues(new Uint8Array(32)));
-  await env.DB.batch([
-    env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(Date.now()),
-    env.DB.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)')
-      .bind(await sha256(token), userId, Date.now() + SESSION_DAYS * 86_400_000),
+  await db.batch([
+    db.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(Date.now()),
+    db
+      .prepare("INSERT INTO sessions VALUES(?,?,?)")
+      .bind(await hash(token), uid, Date.now() + 2592000000),
   ]);
-  return cookie(token, SESSION_DAYS * 86_400);
+  return cookie(token);
 }
-const publicUser = (u: { id: string; email: string; display_name: string }) => ({ id: u.id, email: u.email, user_metadata: { display_name: u.display_name } });
-
-const profileOut = (r: Json) => ({ ...r, onboarding_completed: Boolean(r.onboarding_completed) });
-const notificationOut = (r: Json) => ({ ...r, read: Boolean(r.read) });
-
-// ---- Очки опыта, уровни, ритм недели (всё считает сервер; каждое начисление записано в xp_events один раз)
-const XP = { daily: 5, practice: 15, project: 20, publish: 50, onboarding: 30, lesson: 10, course: 50 } as const;
-const LESSON_COURSE = new Map(Object.entries(courseLessons).flatMap(([cid, ids]) => ids.map((id) => [id, cid] as const)));
-const WEEK_GOAL = 5;
-const levelOf = (xp: number) => Math.floor(Math.sqrt(xp / 100)) + 1; // уровень N начинается с 100·(N−1)² XP
-const dayKey = (ms = Date.now()) => new Date(ms + 5 * 3_600_000).toISOString().slice(0, 10); // сутки по UTC+5 (Казахстан)
-
-async function award(env: Env, userId: string, kind: keyof typeof XP, ref: string): Promise<boolean> {
-  const t = now();
-  const ins = await env.DB.prepare('INSERT OR IGNORE INTO xp_events (id, user_id, kind, ref, xp, day, created_at) VALUES (?,?,?,?,?,?,?)')
-    .bind(crypto.randomUUID(), userId, kind, ref, XP[kind], dayKey(), t).run();
-  if (!ins.meta.changes) return false;
-  const row = await env.DB.prepare('SELECT COALESCE(SUM(xp), 0) AS xp FROM xp_events WHERE user_id = ?').bind(userId).first<{ xp: number }>();
-  const xp = row?.xp ?? 0;
-  await env.DB.prepare('UPDATE profiles SET xp = ?, level = ?, updated_at = ? WHERE user_id = ?').bind(xp, levelOf(xp), t, userId).run();
-  return true;
+async function limit(
+  db: D1Database,
+  key: string,
+  max: number,
+  seconds: number,
+) {
+  const slot = Math.floor(Date.now() / (seconds * 1000)),
+    k = await hash(`${key}:${slot}`);
+  const r = await db
+    .prepare(
+      "INSERT INTO rate_limits VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count",
+    )
+    .bind(k, (slot + 1) * seconds * 1000)
+    .first<{ count: number }>();
+  if (Math.random() < 0.02)
+    await db
+      .prepare("DELETE FROM rate_limits WHERE expires < ?")
+      .bind(Date.now())
+      .run();
+  return (r?.count ?? max + 1) <= max;
 }
-
-async function stats(env: Env, userId: string) {
-  const today = dayKey();
-  const d = new Date(`${today}T00:00:00Z`);
-  const weekStart = new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * 86_400_000).toISOString().slice(0, 10);
-  const [xpRow, pr, daysRes] = await Promise.all([
-    env.DB.prepare('SELECT COALESCE(SUM(xp), 0) AS xp FROM xp_events WHERE user_id = ?').bind(userId).first<{ xp: number }>(),
-    env.DB.prepare("SELECT COUNT(*) AS total, COALESCE(SUM(status = 'published'), 0) AS published FROM projects WHERE owner_id = ?").bind(userId).first<{ total: number; published: number }>(),
-    env.DB.prepare('SELECT DISTINCT day FROM xp_events WHERE user_id = ? AND day >= ? ORDER BY day DESC').bind(userId, dayKey(Date.now() - 60 * 86_400_000)).all<{ day: string }>(),
+const publicUser = (u: Row) => ({
+  id: u.id,
+  email: u.email,
+  user_metadata: { display_name: u.display_name },
+});
+async function stats(db: D1Database, uid: string) {
+  const [sum, ps, ds, badges] = await Promise.all([
+    db
+      .prepare("SELECT COALESCE(SUM(xp),0) xp FROM xp_events WHERE user_id=?")
+      .bind(uid)
+      .first<{ xp: number }>(),
+    db
+      .prepare(
+        "SELECT COUNT(*) total, COALESCE(SUM(status='published'),0) published FROM projects WHERE owner_id=?",
+      )
+      .bind(uid)
+      .first<{ total: number; published: number }>(),
+    db
+      .prepare(
+        "SELECT DISTINCT day FROM xp_events WHERE user_id=? AND kind!='daily' ORDER BY day DESC",
+      )
+      .bind(uid)
+      .all<{ day: string }>(),
+    db
+      .prepare("SELECT badge,earned_at FROM badges WHERE user_id=?")
+      .bind(uid)
+      .all(),
   ]);
-  const days = new Set(daysRes.results.map((r) => r.day));
+  const days = new Set(ds.results.map((r) => r.day));
   let streak = 0;
-  for (let ms = Date.now() - (days.has(today) ? 0 : 86_400_000); days.has(dayKey(ms)); ms -= 86_400_000) streak++;
-  const xp = xpRow?.xp ?? 0, level = levelOf(xp);
-  const floor = 100 * (level - 1) ** 2, next = 100 * level ** 2;
+  let d = new Date(`${day()}T00:00:00Z`);
+  if (!days.has(day())) d = new Date(+d - 86400000);
+  while (days.has(d.toISOString().slice(0, 10))) {
+    streak++;
+    d = new Date(+d - 86400000);
+  }
+  if (streak >= 3)
+    await db
+      .prepare("INSERT OR IGNORE INTO badges VALUES(?,'streak',?)")
+      .bind(uid, now())
+      .run();
+  const xp = sum?.xp ?? 0,
+    level = Math.floor(Math.sqrt(xp / 100)) + 1,
+    floor = 100 * (level - 1) ** 2,
+    next = 100 * level ** 2;
+  const today = new Date(`${day()}T00:00:00Z`),
+    monday = new Date(+today - ((today.getUTCDay() + 6) % 7) * 86400000)
+      .toISOString()
+      .slice(0, 10);
   return {
-    xp, level, levelFloorXp: floor, nextLevelXp: next, levelProgress: (xp - floor) / (next - floor),
-    weekDays: [...days].filter((x) => x >= weekStart).length, weekGoal: WEEK_GOAL, streak,
-    projectsTotal: pr?.total ?? 0, projectsPublished: pr?.published ?? 0,
+    xp,
+    level,
+    levelFloorXp: floor,
+    nextLevelXp: next,
+    levelProgress: (xp - floor) / (next - floor),
+    streak,
+    weekDays: [...days].filter((x) => x >= monday).length,
+    weekGoal: 5,
+    projectsTotal: ps?.total ?? 0,
+    projectsPublished: ps?.published ?? 0,
+    badges: [
+      ...badges.results,
+      ...(streak >= 3 ? [{ badge: "streak", earned_at: now() }] : []),
+    ],
   };
 }
-
-const PROJECT_COLS = 'id, owner_id, title, description, cover_url, category, status, visibility, created_at, updated_at';
-const MAX_CONTENT = 200_000;
-
+async function bodyOf(req: Request): Promise<Row> {
+  if (!req.body) return {};
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > 260000) {
+      await reader.cancel();
+      throw new Error("BODY_TOO_LARGE");
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(size);
+  let pos = 0;
+  for (const c of chunks) {
+    all.set(c, pos);
+    pos += c.length;
+  }
+  const parsed = JSON.parse(new TextDecoder().decode(all));
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object")
+    throw new Error("INVALID_JSON");
+  return parsed;
+}
+const projectCols =
+  "id,owner_id,title,description,status,visibility,cover_url,category,kind,version,created_at,updated_at";
 async function route(req: Request, env: Env): Promise<Response> {
-  const url = new URL(req.url);
-  const path = url.pathname.replace(/\/+$/, '');
-  const method = req.method;
-  if (!path.startsWith('/api')) return fail('Не найдено.', 404);
-
-  if (method !== 'GET' && method !== 'HEAD') {
-    const origin = req.headers.get('Origin');
-    if (origin && origin !== url.origin) return fail('Запрос отклонён.', 403);
-    if (!(req.headers.get('Content-Type') ?? '').includes('application/json')) return fail('Нужен JSON.', 415);
+  const db = env.DB,
+    url = new URL(req.url),
+    path = url.pathname.replace(/\/+$/, ""),
+    method = req.method;
+  if (!path.startsWith("/api/")) return fail("NOT_FOUND", 404);
+  if (path === "/api/healthz") return json({ status: "ok" });
+  const ip = req.headers.get("CF-Connecting-IP") ?? "local";
+  if (!(await limit(db, `api:${ip}`, 300, 60))) return fail("RATE_LIMIT", 429);
+  const write = !["GET", "HEAD"].includes(method);
+  if (write) {
+    if (req.headers.get("Origin") && req.headers.get("Origin") !== url.origin)
+      return fail("ORIGIN", 403);
+    if (!req.headers.get("Content-Type")?.includes("application/json"))
+      return fail("JSON_REQUIRED", 415);
   }
-  const body: Json = method === 'GET' ? {} : await req.json().catch(() => ({}));
-
-  if (path === '/api/healthz') return json({ status: 'ok' });
-
-  if (path === '/api/auth/signup' && method === 'POST') {
-    const email = text(body.email, 254)?.toLowerCase();
-    const name = text(body.displayName, 80);
-    const password = typeof body.password === 'string' ? body.password : '';
-    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !name || password.length < 8 || password.length > 200) {
-      return fail('Укажите имя, почту и пароль не короче 8 символов.');
+  let b: Row = {};
+  if (write) {
+    try {
+      b = await bodyOf(req);
+    } catch (e) {
+      return fail(
+        (e as Error).message === "BODY_TOO_LARGE"
+          ? "BODY_TOO_LARGE"
+          : "INVALID_JSON",
+        (e as Error).message === "BODY_TOO_LARGE" ? 413 : 400,
+      );
     }
-    if (await env.DB.prepare('SELECT 1 FROM users WHERE email = ?').bind(email).first()) return fail('Для этой почты уже создан профиль. Войдите в него.', 409);
-    const id = crypto.randomUUID(), salt = crypto.getRandomValues(new Uint8Array(16)), t = now();
-    await env.DB.batch([
-      env.DB.prepare('INSERT INTO users (id, email, display_name, pw_salt, pw_hash, created_at) VALUES (?,?,?,?,?,?)').bind(id, email, name, hex(salt), await pbkdf2(password, salt), t),
-      env.DB.prepare('INSERT INTO profiles (user_id, display_name, username, created_at, updated_at) VALUES (?,?,?,?,?)').bind(id, name, email.split('@')[0], t, t),
-      env.DB.prepare('INSERT INTO notifications (id, user_id, type, title, body, href, created_at) VALUES (?,?,?,?,?,?,?)')
-        .bind(crypto.randomUUID(), id, 'achievement', 'Добро пожаловать в Creative School', 'Ваше пространство готово. Начните с первого проекта.', '/projects', t),
+  }
+  if (
+    ["/api/auth/signup", "/api/auth/signin", "/api/auth/recover"].includes(
+      path,
+    ) &&
+    method === "POST"
+  ) {
+    const email = text(b.email, 254).toLowerCase(),
+      password = typeof b.password === "string" ? b.password : "";
+    if (
+      !(await limit(db, `auth:${ip}`, 15, 900)) ||
+      !(await limit(db, `email:${email}`, 10, 900))
+    )
+      return fail("RATE_LIMIT", 429);
+    if (path === "/api/auth/signup") {
+      const name = text(b.displayName, 80);
+      if (
+        !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ||
+        !name ||
+        password.length < 12 ||
+        password.length > 200
+      )
+        return fail("SIGNUP_INVALID");
+      const id = crypto.randomUUID(),
+        salt = "v2:" + hex(crypto.getRandomValues(new Uint8Array(16))),
+        recovery = hex(crypto.getRandomValues(new Uint8Array(24))),
+        t = now();
+      try {
+        await db.batch([
+          db
+            .prepare(
+              "INSERT INTO users(id,email,display_name,pw_salt,pw_hash,created_at,recovery_hash) VALUES(?,?,?,?,?,?,?)",
+            )
+            .bind(
+              id,
+              email,
+              name,
+              salt,
+              await passwordHash(password, salt),
+              t,
+              await hash(recovery),
+            ),
+          db
+            .prepare(
+              "INSERT INTO profiles(user_id,display_name,username,created_at,updated_at) VALUES(?,?,?,?,?)",
+            )
+            .bind(id, name, id, t, t),
+        ]);
+      } catch (e) {
+        if (String(e).includes("UNIQUE"))
+          return fail("ACCOUNT_UNAVAILABLE", 409);
+        throw e;
+      }
+      return json(
+        { user: publicUser({ id, email, display_name: name }), recovery },
+        201,
+        { "Set-Cookie": await session(db, id) },
+      );
+    }
+    if (path === "/api/auth/signin") {
+      if (password.length > 200) return fail("LOGIN_INVALID", 401);
+      const u = await db
+        .prepare("SELECT * FROM users WHERE email=?")
+        .bind(email)
+        .first<Row>();
+      const ok = await verify(
+        password,
+        String(u?.pw_salt ?? "v2:dummy"),
+        String(u?.pw_hash ?? "0".repeat(64)),
+      );
+      if (!u || !ok) return fail("LOGIN_INVALID", 401);
+      return json({ user: publicUser(u) }, 200, {
+        "Set-Cookie": await session(db, String(u.id)),
+      });
+    }
+    if (path === "/api/auth/recover") {
+      if (password.length < 12 || password.length > 200)
+        return fail("SIGNUP_INVALID");
+      const u = await db
+        .prepare("SELECT id FROM users WHERE email=? AND recovery_hash=?")
+        .bind(email, await hash(text(b.recovery, 100)))
+        .first<{ id: string }>();
+      if (!u) return fail("LOGIN_INVALID", 401);
+      const salt = "v2:" + hex(crypto.getRandomValues(new Uint8Array(16))),
+        recovery = hex(crypto.getRandomValues(new Uint8Array(24)));
+      await db.batch([
+        db
+          .prepare(
+            "UPDATE users SET pw_salt=?,pw_hash=?,recovery_hash=? WHERE id=?",
+          )
+          .bind(
+            salt,
+            await passwordHash(password, salt),
+            await hash(recovery),
+            u.id,
+          ),
+        db.prepare("DELETE FROM sessions WHERE user_id=?").bind(u.id),
+      ]);
+      return json({ recovery });
+    }
+  }
+  const raw = tokenFrom(req),
+    token = raw ? await hash(raw) : "";
+  const user = await db
+    .prepare(
+      "SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?",
+    )
+    .bind(token, Date.now())
+    .first<Row>();
+  if (path === "/api/me")
+    return user ? json({ user: publicUser(user) }) : fail("UNAUTHORIZED", 401);
+  const publicMatch = path.match(
+    /^\/api\/public\/(profiles|projects)\/([\w-]+)$/,
+  );
+  if (publicMatch && method === "GET") {
+    if (publicMatch[1] === "profiles") {
+      const p = await db
+        .prepare(
+          "SELECT user_id id, display_name,bio,avatar_url FROM profiles WHERE user_id=?",
+        )
+        .bind(publicMatch[2])
+        .first();
+      if (!p) return fail("NOT_FOUND", 404);
+      const projects = await db
+        .prepare(
+          `SELECT ${projectCols},content FROM projects WHERE owner_id=? AND status='published' AND visibility='public' ORDER BY updated_at DESC LIMIT 100`,
+        )
+        .bind(publicMatch[2])
+        .all();
+      return json({ profile: p, projects: projects.results });
+    }
+    const p = await db
+      .prepare(
+        `SELECT ${projectCols},content FROM projects WHERE id=? AND status='published' AND visibility IN ('public','unlisted')`,
+      )
+      .bind(publicMatch[2])
+      .first();
+    return p ? json(p) : fail("NOT_FOUND", 404);
+  }
+  if (!user) return fail("UNAUTHORIZED", 401);
+  const uid = String(user.id);
+  if (write && !(await limit(db, `write:${uid}`, 120, 60)))
+    return fail("RATE_LIMIT", 429);
+  if (path === "/api/auth/signout" && method === "POST") {
+    await db
+      .prepare("DELETE FROM sessions WHERE token_hash=?")
+      .bind(token)
+      .run();
+    return json({ ok: true }, 200, { "Set-Cookie": cookie("", 0) });
+  }
+  if (path === "/api/profile" && method === "GET") {
+    const r = await db
+      .prepare(
+        "SELECT user_id id,display_name,username,avatar_url,bio,role,onboarding_completed,created_at,updated_at FROM profiles WHERE user_id=?",
+      )
+      .bind(uid)
+      .first<Row>();
+    return json({
+      ...r,
+      onboarding_completed: !!r?.onboarding_completed,
+      ...(await stats(db, uid)),
+    });
+  }
+  if (path === "/api/profile" && method === "PATCH") {
+    const name =
+      "display_name" in b
+        ? text(b.display_name, 80)
+        : String(user.display_name);
+    if (!name) return fail("INVALID_INPUT");
+    const old = await db
+      .prepare("SELECT bio FROM profiles WHERE user_id=?")
+      .bind(uid)
+      .first<{ bio: string }>();
+    await db.batch([
+      db
+        .prepare(
+          "UPDATE profiles SET display_name=?,bio=?,onboarding_completed=1,updated_at=? WHERE user_id=?",
+        )
+        .bind(
+          name,
+          "bio" in b ? text(b.bio, 500) : (old?.bio ?? ""),
+          now(),
+          uid,
+        ),
+      db.prepare("UPDATE users SET display_name=? WHERE id=?").bind(name, uid),
     ]);
-    await award(env, id, 'daily', `daily:${dayKey()}`);
-    return json({ user: publicUser({ id, email, display_name: name }) }, 201, { 'Set-Cookie': await startSession(env, id) });
+    return json({ ok: true });
   }
-
-  if (path === '/api/auth/signin' && method === 'POST') {
-    const email = text(body.email, 254)?.toLowerCase();
-    const password = typeof body.password === 'string' ? body.password : '';
-    const u = email ? await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first<{ id: string; email: string; display_name: string; pw_salt: string; pw_hash: string }>() : null;
-    const ok = u ? safeEqual(await pbkdf2(password, fromHex(u.pw_salt)), u.pw_hash) : (await pbkdf2(password, new Uint8Array(16)), false);
-    if (!u || !ok) return fail('Неверная почта или пароль.', 401);
-    await award(env, u.id, 'daily', `daily:${dayKey()}`);
-    return json({ user: publicUser(u) }, 200, { 'Set-Cookie': await startSession(env, u.id) });
+  if (path === "/api/stats" && method === "GET")
+    return json(await stats(db, uid));
+  if (path === "/api/progress" && method === "GET") {
+    const r = await db
+      .prepare("SELECT lesson_id FROM lesson_progress WHERE user_id=?")
+      .bind(uid)
+      .all<{ lesson_id: string }>();
+    return json({ done: r.results.map((x) => x.lesson_id) });
   }
-
-  if (path === '/api/auth/signout' && method === 'POST') {
-    const m = (req.headers.get('Cookie') ?? '').match(new RegExp(`${COOKIE}=([a-f0-9]{64})`));
-    if (m) await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(await sha256(m[1])).run();
-    return json({ ok: true }, 200, { 'Set-Cookie': cookie('', 0) });
+  if (path === "/api/progress" && method === "POST") {
+    const lesson = lessonMap.get(String(b.lessonId));
+    if (!lesson) return fail("NOT_FOUND", 404);
+    if (
+      !Array.isArray(b.answers) ||
+      lesson.questions.some(
+        (q, i) => b.answers instanceof Array && b.answers[i] !== q.answer,
+      ) ||
+      b.answers.length !== lesson.questions.length
+    )
+      return fail("QUIZ_FAILED", 422);
+    const t = now(),
+      course = curriculum.find((c) => c.id === lesson.courseId)!;
+    await db.batch([
+      db
+        .prepare("INSERT OR IGNORE INTO lesson_progress VALUES(?,?,?,?)")
+        .bind(uid, lesson.id, lesson.courseId, t),
+      db
+        .prepare(
+          "INSERT OR IGNORE INTO xp_events SELECT ?,?,'course',?,50,?,? WHERE (SELECT COUNT(*) FROM lesson_progress WHERE user_id=? AND course_id=?)>=?",
+        )
+        .bind(
+          crypto.randomUUID(),
+          uid,
+          lesson.courseId,
+          day(),
+          t,
+          uid,
+          lesson.courseId,
+          course.lessons.length,
+        ),
+    ]);
+    const r = await db
+      .prepare("SELECT lesson_id FROM lesson_progress WHERE user_id=?")
+      .bind(uid)
+      .all<{ lesson_id: string }>();
+    return json({ done: r.results.map((x) => x.lesson_id) });
   }
-
-  const user = await currentUser(req, env);
-  if (path === '/api/me' && method === 'GET') return user ? json({ user: publicUser(user) }) : fail('Не выполнен вход.', 401);
-  if (!user) return fail('Не выполнен вход.', 401);
-
-  if (path === '/api/profile' && method === 'GET') {
-    const r = await env.DB.prepare('SELECT user_id AS id, display_name, username, avatar_url, bio, role, xp, level, onboarding_completed, created_at, updated_at FROM profiles WHERE user_id = ?').bind(user.id).first<Json>();
-    return r ? json(profileOut(r)) : fail('Профиль не найден.', 404);
+  if (path === "/api/projects" && method === "GET") {
+    const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
+    const r = await db
+      .prepare(
+        `SELECT ${projectCols},content FROM projects WHERE owner_id=? ORDER BY updated_at DESC LIMIT 24 OFFSET ?`,
+      )
+      .bind(uid, offset)
+      .all();
+    return json(r.results);
   }
-  if (path === '/api/profile' && method === 'PATCH') {
-    const sets: string[] = [], vals: unknown[] = [];
-    for (const [k, max] of [['display_name', 80], ['username', 40], ['bio', 500], ['avatar_url', 500]] as const) {
-      if (k in body) { sets.push(`${k} = ?`); vals.push(body[k] === null ? null : text(body[k], max)); }
-    }
-    if (typeof body.onboarding_completed === 'boolean') { sets.push('onboarding_completed = ?'); vals.push(body.onboarding_completed ? 1 : 0); }
-    if (sets.length) await env.DB.prepare(`UPDATE profiles SET ${sets.join(', ')}, updated_at = ? WHERE user_id = ?`).bind(...vals, now(), user.id).run();
-    if (body.onboarding_completed === true) await award(env, user.id, 'onboarding', 'onboarding');
-    const r = await env.DB.prepare('SELECT user_id AS id, display_name, username, avatar_url, bio, role, xp, level, onboarding_completed, created_at, updated_at FROM profiles WHERE user_id = ?').bind(user.id).first<Json>();
-    return r ? json(profileOut(r)) : fail('Профиль не найден.', 404);
-  }
-
-  if (path === '/api/projects' && method === 'GET') {
-    const { results } = await env.DB.prepare(`SELECT ${PROJECT_COLS} FROM projects WHERE owner_id = ? ORDER BY updated_at DESC`).bind(user.id).all<Json>();
-    return json(results);
-  }
-  if (path === '/api/projects' && method === 'POST') {
-    const title = text(body.title, 120);
-    if (!title) return fail('Укажите название проекта.');
-    const content = typeof body.content === 'string' && body.content.length <= MAX_CONTENT ? body.content : null;
-    const p = { id: crypto.randomUUID(), owner_id: user.id, title, description: text(body.description, 1000), category: text(body.category, 40), status: 'draft', visibility: 'private', cover_url: null, created_at: now(), updated_at: now() };
-    await env.DB.prepare('INSERT INTO projects (id, owner_id, title, description, category, status, visibility, cover_url, created_at, updated_at, content) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-      .bind(p.id, p.owner_id, p.title, p.description, p.category, p.status, p.visibility, p.cover_url, p.created_at, p.updated_at, content).run();
-    const today = await env.DB.prepare("SELECT COUNT(*) AS n FROM xp_events WHERE user_id = ? AND kind = 'project' AND day = ?").bind(user.id, dayKey()).first<{ n: number }>();
-    if ((today?.n ?? 0) < 5) await award(env, user.id, 'project', `project:${p.id}`); // не больше 5 проектов в сутки дают XP
-    return json(p, 201);
+  if (path === "/api/projects" && method === "POST") {
+    const title = text(b.title, 120),
+      kind = kinds.includes(b.kind as ProjectKind)
+        ? (b.kind as ProjectKind)
+        : "notes",
+      content =
+        b.content == null
+          ? null
+          : typeof b.content === "string"
+            ? b.content
+            : undefined;
+    if (!title || content === undefined || !validDocument(kind, content))
+      return fail("INVALID_DOCUMENT");
+    const count = await db
+      .prepare("SELECT COUNT(*) n FROM projects WHERE owner_id=?")
+      .bind(uid)
+      .first<{ n: number }>();
+    if ((count?.n ?? 0) >= 500) return fail("QUOTA", 409);
+    const id = crypto.randomUUID(),
+      t = now();
+    await db
+      .prepare(
+        "INSERT INTO projects(id,owner_id,title,description,category,kind,content,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+      )
+      .bind(
+        id,
+        uid,
+        title,
+        text(b.description, 1000),
+        kind,
+        kind,
+        content,
+        t,
+        t,
+      )
+      .run();
+    return json(
+      await db.prepare("SELECT * FROM projects WHERE id=?").bind(id).first(),
+      201,
+    );
   }
   const pm = path.match(/^\/api\/projects\/([\w-]+)$/);
-  if (pm && method === 'PATCH') {
-    const sets: string[] = [], vals: unknown[] = [];
-    if ('title' in body) { const v = text(body.title, 120); if (!v) return fail('Название не может быть пустым.'); sets.push('title = ?'); vals.push(v); }
-    if ('description' in body) { sets.push('description = ?'); vals.push(text(body.description, 1000)); }
-    if ('category' in body) { sets.push('category = ?'); vals.push(text(body.category, 40)); }
-    if (['draft', 'published', 'archived'].includes(body.status as string)) { sets.push('status = ?'); vals.push(body.status); }
-    if (['private', 'unlisted', 'public'].includes(body.visibility as string)) { sets.push('visibility = ?'); vals.push(body.visibility); }
-    if ('content' in body) {
-      if (typeof body.content !== 'string' || body.content.length > MAX_CONTENT) return fail('Файл проекта слишком большой.');
-      sets.push('content = ?'); vals.push(body.content);
+  if (pm) {
+    const p = await db
+      .prepare("SELECT * FROM projects WHERE id=? AND owner_id=?")
+      .bind(pm[1], uid)
+      .first<Row>();
+    if (!p) return fail("NOT_FOUND", 404);
+    if (method === "GET") return json(p);
+    if (method === "DELETE") {
+      await db
+        .prepare("DELETE FROM projects WHERE id=? AND owner_id=? AND version=?")
+        .bind(pm[1], uid, Number(b.version))
+        .run();
+      const remaining = await db
+        .prepare("SELECT id FROM projects WHERE id=?")
+        .bind(pm[1])
+        .first();
+      return remaining ? fail("CONFLICT", 409) : json({ ok: true });
     }
-    if (!sets.length) return fail('Нечего обновлять.');
-    const res = await env.DB.prepare(`UPDATE projects SET ${sets.join(', ')}, updated_at = ? WHERE id = ? AND owner_id = ?`).bind(...vals, now(), pm[1], user.id).run();
-    if (!res.meta.changes) return fail('Проект не найден.', 404);
-    if (body.status === 'published') await award(env, user.id, 'publish', pm[1]);
-    return json(await env.DB.prepare(`SELECT ${PROJECT_COLS} FROM projects WHERE id = ?`).bind(pm[1]).first<Json>());
-  }
-  if (pm && method === 'GET') {
-    const r = await env.DB.prepare('SELECT * FROM projects WHERE id = ? AND owner_id = ?').bind(pm[1], user.id).first<Json>();
-    return r ? json(r) : fail('Проект не найден.', 404);
-  }
-  if (pm && method === 'DELETE') {
-    const res = await env.DB.prepare('DELETE FROM projects WHERE id = ? AND owner_id = ?').bind(pm[1], user.id).run();
-    return res.meta.changes ? json({ ok: true }) : fail('Проект не найден.', 404);
-  }
-
-  if (path === '/api/stats' && method === 'GET') return json(await stats(env, user.id));
-  if (path === '/api/practice' && method === 'POST') {
-    const awarded = await award(env, user.id, 'practice', `practice:${dayKey()}`);
-    return json({ awarded, xp: XP.practice });
-  }
-
-  if (path === '/api/progress' && method === 'GET') {
-    const { results } = await env.DB.prepare('SELECT lesson_id FROM lesson_progress WHERE user_id = ?').bind(user.id).all<{ lesson_id: string }>();
-    return json({ done: results.map((r) => r.lesson_id) });
-  }
-  if (path === '/api/progress' && method === 'POST') {
-    const lessonId = typeof body.lessonId === 'string' ? body.lessonId : '';
-    const courseId = LESSON_COURSE.get(lessonId);
-    if (!courseId) return fail('Урок не найден.', 404);
-    const ins = await env.DB.prepare('INSERT OR IGNORE INTO lesson_progress (user_id, lesson_id, course_id, completed_at) VALUES (?,?,?,?)').bind(user.id, lessonId, courseId, now()).run();
-    let xp = 0;
-    if (ins.meta.changes) {
-      if (await award(env, user.id, 'lesson', lessonId)) xp += XP.lesson;
-      const total = courseLessons[courseId]?.length ?? 0;
-      const cnt = await env.DB.prepare('SELECT COUNT(*) AS n FROM lesson_progress WHERE user_id = ? AND course_id = ?').bind(user.id, courseId).first<{ n: number }>();
-      if (total > 0 && (cnt?.n ?? 0) >= total && (await award(env, user.id, 'course', courseId))) xp += XP.course;
+    if (method === "PATCH") {
+      const title = "title" in b ? text(b.title, 120) : String(p.title),
+        content = "content" in b ? b.content : p.content;
+      if (
+        !title ||
+        (content !== null && typeof content !== "string") ||
+        !validDocument(p.kind as ProjectKind, content as string | null)
+      )
+        return fail("INVALID_DOCUMENT");
+      const status = ["draft", "published", "archived"].includes(
+          String(b.status),
+        )
+          ? b.status
+          : p.status,
+        visibility = ["private", "public", "unlisted"].includes(
+          String(b.visibility),
+        )
+          ? b.visibility
+          : p.visibility;
+      const r = await db
+        .prepare(
+          "UPDATE projects SET title=?,description=?,content=?,status=?,visibility=?,version=version+1,updated_at=? WHERE id=? AND owner_id=? AND version=?",
+        )
+        .bind(
+          title,
+          "description" in b ? text(b.description, 1000) : p.description,
+          content,
+          status,
+          visibility,
+          now(),
+          pm[1],
+          uid,
+          Number(b.version),
+        )
+        .run();
+      if (!r.meta.changes) return fail("CONFLICT", 409);
+      return json(
+        await db
+          .prepare("SELECT * FROM projects WHERE id=?")
+          .bind(pm[1])
+          .first(),
+      );
     }
-    const { results } = await env.DB.prepare('SELECT lesson_id FROM lesson_progress WHERE user_id = ?').bind(user.id).all<{ lesson_id: string }>();
-    return json({ done: results.map((r) => r.lesson_id), xp });
   }
-
-  if (path === '/api/notifications' && method === 'GET') {
-    const { results } = await env.DB.prepare('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 100').bind(user.id).all<Json>();
-    return json(results.map(notificationOut));
+  if (path === "/api/security/sessions" && method === "GET") {
+    const r = await db
+      .prepare(
+        "SELECT token_hash,expires_at FROM sessions WHERE user_id=? AND expires_at>?",
+      )
+      .bind(uid, Date.now())
+      .all<{ token_hash: string; expires_at: number }>();
+    return json(
+      r.results.map((s) => ({
+        current: s.token_hash === token,
+        expires_at: s.expires_at,
+      })),
+    );
+  }
+  if (path.startsWith("/api/security/") && method === "POST") {
+    if (!(await limit(db, `security:${uid}`, 10, 900)))
+      return fail("RATE_LIMIT", 429);
+    if (
+      !(await verify(
+        typeof b.password === "string" ? b.password : "",
+        String(user.pw_salt),
+        String(user.pw_hash),
+      ))
+    )
+      return fail("LOGIN_INVALID", 401);
+    if (path === "/api/security/logout-all") {
+      await db.prepare("DELETE FROM sessions WHERE user_id=?").bind(uid).run();
+      return json({ ok: true }, 200, { "Set-Cookie": cookie("", 0) });
+    }
+    if (path === "/api/security/delete") {
+      await db.prepare("DELETE FROM users WHERE id=?").bind(uid).run();
+      return json({ ok: true }, 200, { "Set-Cookie": cookie("", 0) });
+    }
+    if (path === "/api/security/password") {
+      const password = text(b.newPassword, 200);
+      if (password.length < 12) return fail("SIGNUP_INVALID");
+      const salt = "v2:" + hex(crypto.getRandomValues(new Uint8Array(16)));
+      await db.batch([
+        db
+          .prepare("UPDATE users SET pw_salt=?,pw_hash=? WHERE id=?")
+          .bind(salt, await passwordHash(password, salt), uid),
+        db.prepare("DELETE FROM sessions WHERE user_id=?").bind(uid),
+      ]);
+      return json({ ok: true }, 200, { "Set-Cookie": await session(db, uid) });
+    }
+    if (path === "/api/security/recovery") {
+      const recovery = hex(crypto.getRandomValues(new Uint8Array(24)));
+      await db
+        .prepare("UPDATE users SET recovery_hash=? WHERE id=?")
+        .bind(await hash(recovery), uid)
+        .run();
+      return json({ recovery });
+    }
+    if (path === "/api/security/export") {
+      const [p, x, l] = await Promise.all(
+        ["projects", "xp_events", "lesson_progress"].map((table) =>
+          db
+            .prepare(
+              `SELECT * FROM ${table} WHERE ${table === "projects" ? "owner_id" : "user_id"}=?`,
+            )
+            .bind(uid)
+            .all(),
+        ),
+      );
+      return json({
+        user: publicUser(user),
+        projects: p.results,
+        xp: x.results,
+        lessons: l.results,
+      });
+    }
+  }
+  if (path === "/api/notifications" && method === "GET") {
+    const r = await db
+      .prepare(
+        "SELECT * FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 100",
+      )
+      .bind(uid)
+      .all();
+    return json(r.results);
   }
   const nm = path.match(/^\/api\/notifications\/([\w-]+)\/read$/);
-  if (nm && method === 'POST') {
-    const res = await env.DB.prepare('UPDATE notifications SET read = 1 WHERE id = ? AND user_id = ?').bind(nm[1], user.id).run();
-    return res.meta.changes ? json({ ok: true }) : fail('Уведомление не найдено.', 404);
+  if (nm && method === "POST") {
+    await db
+      .prepare("UPDATE notifications SET read=1 WHERE user_id=? AND id=?")
+      .bind(uid, nm[1])
+      .run();
+    return json({ ok: true });
   }
-  return fail('Не найдено.', 404);
+  if (path === "/api/admin" && method === "GET") {
+    const role = await db
+      .prepare("SELECT role FROM profiles WHERE user_id=?")
+      .bind(uid)
+      .first<{ role: string }>();
+    if (role?.role !== "admin") return fail("FORBIDDEN", 403);
+    return json(
+      await db
+        .prepare(
+          "SELECT (SELECT COUNT(*) FROM users) users,(SELECT COUNT(*) FROM projects) projects,(SELECT COUNT(*) FROM lesson_progress) lessons",
+        )
+        .first(),
+    );
+  }
+  return fail("NOT_FOUND", 404);
 }
-
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
-    try { return await route(req, env); } catch (e) { console.error(e); return fail('Внутренняя ошибка сервера.', 500); }
+  async fetch(req: Request, env: Env) {
+    try {
+      return await route(req, env);
+    } catch (e) {
+      console.error("API error", e instanceof Error ? e.message : "unknown");
+      return fail("SERVER_ERROR", 500);
+    }
   },
 };
