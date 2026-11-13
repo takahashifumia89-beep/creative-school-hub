@@ -19,7 +19,7 @@ const setup = spawnSync(
 if (setup.status !== 0) process.exit(setup.status ?? 1);
 const server = spawn(
   "npx",
-  ["wrangler", "dev", "--port", "8787", "--persist-to", state],
+  ["wrangler", "dev", "--port", "8790", "--persist-to", state],
   { stdio: "inherit" },
 );
 for (const signal of ["SIGTERM", "SIGINT"])

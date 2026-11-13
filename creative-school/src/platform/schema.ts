@@ -86,6 +86,7 @@ export type ProjectKind = "design" | "3d" | "image" | "video" | "notes";
 export const kinds = ["design", "3d", "image", "video", "notes"] as const;
 export function validDocument(kind: ProjectKind, content: string | null) {
   if (content === null) return true;
+  if (typeof content !== "string") return false;
   if (content.length > 200000) return false;
   if (kind === "notes") return true;
   try {
@@ -99,3 +100,11 @@ export function validDocument(kind: ProjectKind, content: string | null) {
     return false;
   }
 }
+
+export const draftSchema = z.object({
+  title: z.string().max(120),
+  description: z.string().max(1000),
+  content: z.string().max(200000),
+  version: z.number().int().positive(),
+  id: z.string().uuid().nullable(),
+});

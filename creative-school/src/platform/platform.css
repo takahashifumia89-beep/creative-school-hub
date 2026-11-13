@@ -1,7 +1,7 @@
 .platform {
   min-height: 100vh;
-  background: var(--background);
-  color: var(--foreground);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
   font-family: Inter, Arial, sans-serif;
   font-size: 14px;
   line-height: 1.6;
@@ -19,19 +19,19 @@
   align-items: center;
   justify-content: center;
   gap: 7px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 9px;
   padding: 9px 14px;
   font-size: 12px;
   font-weight: 600;
-  background: var(--card);
+  background: hsl(var(--card));
   cursor: pointer;
   transition:
     background 0.15s,
     transform 0.15s;
 }
 .platform button:hover:not(:disabled) {
-  background: var(--muted);
+  background: hsl(var(--muted));
 }
 .platform button:disabled {
   opacity: 0.45;
@@ -55,11 +55,11 @@
 .platform select {
   display: block;
   width: 100%;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 8px;
-  background: var(--background);
+  background: hsl(var(--background));
   padding: 10px 12px;
-  color: var(--foreground);
+  color: hsl(var(--foreground));
   font: inherit;
 }
 .platform input[type="checkbox"],
@@ -108,7 +108,7 @@
 }
 .platform p {
   margin: 12px 0;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
 }
 .platform section {
   padding: 44px clamp(20px, 4vw, 64px);
@@ -117,7 +117,7 @@
 }
 .platform header {
   height: 76px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid hsl(var(--border));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -134,7 +134,7 @@
   color: #e8590c;
 }
 .header-motto {
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 12px;
 }
 .header-search {
@@ -149,8 +149,8 @@
   position: fixed;
   inset: 0 auto 0 0;
   z-index: 40;
-  background: var(--sidebar);
-  border-right: 1px solid var(--border);
+  background: hsl(var(--sidebar));
+  border-right: 1px solid hsl(var(--border));
   padding: 28px 20px;
   display: flex;
   flex-direction: column;
@@ -166,7 +166,7 @@
   align-items: center;
   padding: 10px 12px;
   border-radius: 8px;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 13px;
 }
 .sidebar nav a[aria-current="page"] {
@@ -221,10 +221,10 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .card {
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 16px;
   padding: 24px;
-  background: var(--card);
+  background: hsl(var(--card));
   min-width: 0;
 }
 .course-card {
@@ -248,11 +248,11 @@
 }
 .notice,
 .error {
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 10px;
   padding: 14px 18px;
   margin: 18px 0;
-  background: var(--muted);
+  background: hsl(var(--muted));
 }
 .error {
   border-color: #dc2626;
@@ -269,7 +269,7 @@
 .lesson > p {
   font-size: 17px;
   line-height: 1.9;
-  color: var(--foreground);
+  color: hsl(var(--foreground));
 }
 .lesson ol {
   list-style: decimal;
@@ -279,7 +279,7 @@
   margin: 8px 0;
 }
 .lesson fieldset {
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 10px;
   padding: 18px;
   margin: 20px 0;
@@ -297,7 +297,7 @@
   font-weight: 400 !important;
 }
 .answer:has(input:checked) {
-  background: var(--muted);
+  background: hsl(var(--muted));
 }
 .lesson-list {
   list-style: none;
@@ -310,7 +310,7 @@
   align-items: center;
   gap: 12px;
   padding: 16px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 10px;
 }
 .lesson-list a[aria-current="page"] {
@@ -324,7 +324,7 @@
   height: 180px;
   object-fit: contain;
   border-radius: 10px;
-  background: var(--muted);
+  background: hsl(var(--muted));
   margin-bottom: 20px;
 }
 .placeholder {
@@ -345,7 +345,7 @@
   gap: 16px;
   margin: 24px 0;
   padding: 24px;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 12px;
 }
 .studio-meta .row {
@@ -368,7 +368,7 @@
   max-width: 100%;
   max-height: 560px;
   margin: 20px auto;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 10px;
 }
 .timeline {
@@ -378,7 +378,7 @@
   padding: 18px 0;
 }
 .clip {
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 10px;
   padding: 10px;
   min-width: 180px;
@@ -405,7 +405,7 @@
   display: block;
   overflow-wrap: anywhere;
   padding: 20px;
-  background: var(--muted);
+  background: hsl(var(--muted));
   margin: 20px 0;
   font-size: 15px;
 }
@@ -483,18 +483,18 @@
 .hero-stats {
   display: flex;
   gap: 45px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid hsl(var(--border));
   padding-top: 25px;
 }
 .hero-stats div {
   display: flex;
   flex-direction: column;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 11px;
 }
 .hero-stats strong {
   font-size: 29px;
-  color: var(--foreground);
+  color: hsl(var(--foreground));
 }
 .large-heading {
   font-size: clamp(30px, 4vw, 48px) !important;
@@ -512,9 +512,9 @@
 .platform footer {
   padding: 35px;
   text-align: center;
-  color: var(--muted-foreground);
+  color: hsl(var(--muted-foreground));
   font-size: 11px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid hsl(var(--border));
   margin-top: 50px;
 }
 .language {
@@ -523,10 +523,10 @@
   bottom: 18px;
   z-index: 55;
   display: flex;
-  border: 1px solid var(--border);
+  border: 1px solid hsl(var(--border));
   border-radius: 30px;
   overflow: hidden;
-  background: var(--card);
+  background: hsl(var(--card));
   box-shadow: 0 3px 20px #0001;
 }
 .language button {
@@ -547,7 +547,7 @@
   top: -100px;
   left: 20px;
   z-index: 100;
-  background: var(--card);
+  background: hsl(var(--card));
   padding: 15px;
 }
 .skip-link:focus {
@@ -556,7 +556,7 @@
 .empty {
   padding: 80px;
   text-align: center;
-  border: 1px dashed var(--border);
+  border: 1px dashed hsl(var(--border));
   border-radius: 14px;
 }
 .platform .hidden {
@@ -675,5 +675,17 @@
     animation-duration: 0.01ms !important;
     transition: none !important;
     scroll-behavior: auto !important;
+  }
+}
+
+.platform .hero-art .art-label {
+  z-index: 2;
+}
+.platform .hero-art .art-block {
+  z-index: 1;
+}
+@media (max-width: 800px) {
+  .platform .art-block {
+    bottom: -140px;
   }
 }

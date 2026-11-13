@@ -16,7 +16,7 @@ import {
   type Project,
   type User,
 } from "./client";
-import { validDocument, type ProjectKind } from "./schema";
+import { validDocument, draftSchema, type ProjectKind } from "./schema";
 const Design = lazy(() =>
   import("../features/studio/DesignEditor").then((m) => ({
     default: m.DesignEditor,
@@ -101,7 +101,10 @@ export default function Studio({
   useEffect(() => {
     let local: Draft | null = null;
     try {
-      local = JSON.parse(localStorage.getItem(storageKey) ?? "null");
+      const parsed = draftSchema.safeParse(
+        JSON.parse(localStorage.getItem(storageKey) ?? "null"),
+      );
+      local = parsed.success ? parsed.data : null;
     } catch {
       /* broken draft */
     }

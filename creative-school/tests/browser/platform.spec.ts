@@ -180,6 +180,10 @@ test("three languages, keyboard navigation and responsive landing", async ({
   await expect(
     page.getByRole("heading", { name: "Идеяларыңыз туындыға айналсын." }),
   ).toBeVisible();
+  await expect(page.locator(".tool-card").first()).toHaveCSS(
+    "border-top-width",
+    "1px",
+  );
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("lang", "kk");
   await page.setViewportSize({ width: 390, height: 844 });
@@ -225,16 +229,14 @@ test("image corrections export a real PNG and video timeline exports audio/video
   request,
 }) => {
   const a = await account(request);
-  await page
-    .context()
-    .addCookies([
-      {
-        name: "cs_session",
-        value: a.headers.Cookie.split("=")[1],
-        domain: "localhost",
-        path: "/",
-      },
-    ]);
+  await page.context().addCookies([
+    {
+      name: "cs_session",
+      value: a.headers.Cookie.split("=")[1],
+      domain: "localhost",
+      path: "/",
+    },
+  ]);
   await page.goto("/studio/image");
   const png = await page.evaluate(() => {
     const c = document.createElement("canvas");
@@ -261,13 +263,11 @@ test("image corrections export a real PNG and video timeline exports audio/video
   page.on("dialog", (d) => d.accept());
   await page.goto("/studio/video");
   const { videoFixture } = await import("../fixture");
-  await page
-    .locator('input[accept="video/*"]')
-    .setInputFiles({
-      name: "source.webm",
-      mimeType: "video/webm",
-      buffer: videoFixture,
-    });
+  await page.locator('input[accept="video/*"]').setInputFiles({
+    name: "source.webm",
+    mimeType: "video/webm",
+    buffer: videoFixture,
+  });
   await expect(page.getByLabel("Конец, с")).toBeVisible();
   await page.getByLabel("Титр", { exact: true }).fill("Export test");
   const videoDownload = page.waitForEvent("download");
@@ -285,16 +285,14 @@ test("3D scene exports a valid GLB and translates editor controls", async ({
   request,
 }) => {
   const a = await account(request);
-  await page
-    .context()
-    .addCookies([
-      {
-        name: "cs_session",
-        value: a.headers.Cookie.split("=")[1],
-        domain: "localhost",
-        path: "/",
-      },
-    ]);
+  await page.context().addCookies([
+    {
+      name: "cs_session",
+      value: a.headers.Cookie.split("=")[1],
+      domain: "localhost",
+      path: "/",
+    },
+  ]);
   await page.goto("/studio/3d");
   await page.getByRole("button", { name: "+ Куб", exact: true }).click();
   const file = page.waitForEvent("download");
@@ -306,4 +304,72 @@ test("3D scene exports a valid GLB and translates editor controls", async ({
   await expect(
     page.getByRole("button", { name: "+ Box", exact: true }),
   ).toBeVisible();
+});
+
+test("offline quiz queue syncs and stays isolated between accounts", async ({
+  page,
+  request,
+}) => {
+  const a = await account(request);
+  await page
+    .context()
+    .addCookies([
+      {
+        name: "cs_session",
+        value: a.headers.Cookie.split("=")[1],
+        domain: "localhost",
+        path: "/",
+      },
+    ]);
+  await page.goto("/learn/visual-basics/vis-1");
+  await page.getByLabel("Практика выполнена и проверена мной.").check();
+  await page
+    .getByLabel("Изменить размер и контраст одного ключевого элемента", {
+      exact: true,
+    })
+    .check();
+  await page
+    .getByLabel(
+      "Исходник, экспорт и объяснение выбора между двумя вариантами.",
+      { exact: true },
+    )
+    .check();
+  await page.route("**/api/progress", (route) =>
+    route.request().method() === "POST" ? route.abort() : route.continue(),
+  );
+  await page
+    .getByRole("button", { name: "Проверить ответы · +10 XP", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "В очереди", exact: true }),
+  ).toBeVisible();
+  await page.unroute("**/api/progress");
+  await page
+    .getByRole("button", { name: "Синхронизировать", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Пройдено", exact: true }),
+  ).toBeVisible();
+  const b = await account(request);
+  await page
+    .context()
+    .addCookies([
+      {
+        name: "cs_session",
+        value: b.headers.Cookie.split("=")[1],
+        domain: "localhost",
+        path: "/",
+      },
+    ]);
+  await page.reload();
+  await expect(
+    page.getByRole("button", {
+      name: "Проверить ответы · +10 XP",
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(
+    (await (await request.get("/api/progress", { headers: b.headers })).json())
+      .done,
+  ).toEqual([]);
 });
