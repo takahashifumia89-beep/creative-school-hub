@@ -64,11 +64,11 @@ function ImageEditor({
     ctx.clearRect(0, 0, c.width, c.height);
     ctx.save();
     ctx.translate(c.width / 2, c.height / 2);
-    ctx.scale(scale, scale);
+    ctx.scale(scale * (value.flipX ? -1 : 1), scale * (value.flipY ? -1 : 1));
     ctx.rotate((value.rotation * Math.PI) / 180);
     ctx.filter = compare
       ? "none"
-      : `brightness(${value.brightness}%) contrast(${value.contrast}%) saturate(${value.saturation}%) grayscale(${value.grayscale ? 1 : 0})`;
+      : `brightness(${value.brightness}%) contrast(${value.contrast}%) saturate(${value.saturation}%) grayscale(${value.grayscale ? 1 : 0}) sepia(${value.sepia ?? 0}%) blur(${value.blur ?? 0}px)`;
     ctx.drawImage(source, -source.width / 2, -source.height / 2);
     ctx.restore();
   }, [value, source, compare]);
@@ -143,6 +143,78 @@ function ImageEditor({
       </label>
       <p>{value.filename}</p>
       <canvas ref={canvas} className="image-canvas" />
+      <div className="row">
+        <button
+          aria-pressed={!!value.flipX}
+          onClick={() => edit({ ...value, flipX: !value.flipX })}
+        >
+          {t(
+            L(
+              "Отразить по горизонтали",
+              "Flip horizontal",
+              "Көлденең шағылыстыру",
+            ),
+          )}
+        </button>
+        <button
+          aria-pressed={!!value.flipY}
+          onClick={() => edit({ ...value, flipY: !value.flipY })}
+        >
+          {t(
+            L("Отразить по вертикали", "Flip vertical", "Тігінен шағылыстыру"),
+          )}
+        </button>
+        <button
+          onClick={() =>
+            edit({
+              ...value,
+              brightness: 100,
+              contrast: 100,
+              saturation: 100,
+              grayscale: false,
+              rotation: 0,
+              crop: "original",
+              flipX: false,
+              flipY: false,
+              blur: 0,
+              sepia: 0,
+            })
+          }
+        >
+          {t(
+            L(
+              "Сбросить коррекцию",
+              "Reset adjustments",
+              "Түзетуді қалпына келтіру",
+            ),
+          )}
+        </button>
+      </div>
+      <div className="grid2">
+        <label>
+          {t(L("Сепия", "Sepia", "Сепия"))}
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={value.sepia ?? 0}
+            onPointerDown={() => past.current.push(value)}
+            onChange={(e) => onChange({ ...value, sepia: +e.target.value })}
+          />
+        </label>
+        <label>
+          {t(L("Размытие", "Blur", "Бұлыңғырлық"))}
+          <input
+            type="range"
+            min={0}
+            max={10}
+            step={0.2}
+            value={value.blur ?? 0}
+            onPointerDown={() => past.current.push(value)}
+            onChange={(e) => onChange({ ...value, blur: +e.target.value })}
+          />
+        </label>
+      </div>
       <div className="row">
         <button
           disabled={!past.current.length}
@@ -268,6 +340,7 @@ function VideoEditor({
     canvas = useRef<HTMLCanvasElement>(null),
     cancel = useRef(false),
     urls = useRef<string[]>([]);
+  const [soundtrackUrl, setSoundtrackUrl] = useState("");
   const cur = value.clips.find((c) => c.id === selected);
   const total = value.clips.reduce((s, c) => s + c.end - c.start, 0);
   useEffect(
@@ -368,6 +441,18 @@ function VideoEditor({
       );
       return;
     }
+    if (value.soundtrack && !soundtrackUrl) {
+      setError(
+        t(
+          L(
+            "Выберите исходник звуковой дорожки.",
+            "Relink the soundtrack source.",
+            "Дыбыс жолының түпнұсқасын таңдаңыз.",
+          ),
+        ),
+      );
+      return;
+    }
     if (total > 600) {
       setError(
         t(
@@ -427,9 +512,22 @@ function VideoEditor({
     });
     let elapsed = 0;
     let active: HTMLVideoElement | null = null;
+    let music: HTMLAudioElement | null = null;
     let frame = 0;
     try {
       await audio.resume();
+      const mix = audio.createDynamicsCompressor();
+      mix.threshold.value = -3;
+      mix.ratio.value = 20;
+      mix.connect(destination);
+      if (value.soundtrack && soundtrackUrl) {
+        music = new Audio(soundtrackUrl);
+        const source = audio.createMediaElementSource(music),
+          gain = audio.createGain();
+        gain.gain.value = value.soundtrack.volume;
+        source.connect(gain).connect(mix);
+        await music.play();
+      }
       recorder.start(1000);
       for (const clip of value.clips) {
         if (cancel.current) break;
@@ -444,7 +542,7 @@ function VideoEditor({
         const input = audio.createMediaElementSource(v),
           gain = audio.createGain();
         gain.gain.value = clip.volume;
-        input.connect(gain).connect(destination);
+        input.connect(gain).connect(mix);
         v.currentTime = clip.start;
         await new Promise<void>((ok) => {
           if (Math.abs(v.currentTime - clip.start) < 0.01 && clip.start === 0)
@@ -460,6 +558,24 @@ function VideoEditor({
               return;
             }
             try {
+              const fade = Math.min(
+                clip.fade ?? 0,
+                (clip.end - clip.start) / 2,
+              );
+              const alpha =
+                fade > 0
+                  ? Math.max(
+                      0,
+                      Math.min(
+                        1,
+                        (v.currentTime - clip.start) / fade,
+                        (clip.end - v.currentTime) / fade,
+                      ),
+                    )
+                  : 1;
+              gain.gain.value = clip.volume * alpha;
+              ctx.globalAlpha = 1;
+              ctx.filter = "none";
               ctx.fillStyle = value.bg;
               ctx.fillRect(0, 0, c.width, c.height);
               const scale = Math.min(
@@ -468,7 +584,10 @@ function VideoEditor({
                 ),
                 w = v.videoWidth * scale,
                 h = v.videoHeight * scale;
+              ctx.globalAlpha = alpha;
+              ctx.filter = `brightness(${clip.brightness ?? 100}%) contrast(${clip.contrast ?? 100}%)`;
               ctx.drawImage(v, (c.width - w) / 2, (c.height - h) / 2, w, h);
+              ctx.filter = "none";
               if (clip.title) {
                 ctx.fillStyle = "rgba(0,0,0,.6)";
                 ctx.fillRect(0, c.height - 100, c.width, 100);
@@ -514,6 +633,7 @@ function VideoEditor({
     } finally {
       cancelAnimationFrame(frame);
       active?.pause();
+      music?.pause();
       stream.getTracks().forEach((track) => track.stop());
       await audio.close();
       setBusy(false);
@@ -551,6 +671,88 @@ function VideoEditor({
           onChange={(e) => void add(e.target.files)}
         />
       </label>
+      <div className="my-4 rounded-xl border border-border p-3">
+        <label className="file-button">
+          {t(
+            L(
+              "Добавить / привязать звуковую дорожку",
+              "Add / relink soundtrack",
+              "Дыбыс жолын қосу / байланыстыру",
+            ),
+          )}
+          <input
+            type="file"
+            accept="audio/*"
+            disabled={busy}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              if (f.size > 40 * 1024 * 1024) {
+                setError(
+                  t(
+                    L(
+                      "Аудио до 40 МБ.",
+                      "Audio up to 40 MB.",
+                      "Аудио 40 МБ дейін.",
+                    ),
+                  ),
+                );
+                return;
+              }
+              const url = URL.createObjectURL(f);
+              urls.current.push(url);
+              setSoundtrackUrl(url);
+              onChange({
+                ...value,
+                soundtrack: {
+                  filename: f.name,
+                  volume: value.soundtrack?.volume ?? 0.3,
+                },
+              });
+            }}
+          />
+        </label>
+        {value.soundtrack && (
+          <>
+            <p>
+              {value.soundtrack.filename} {soundtrackUrl ? "✓" : "⚠"}
+            </p>
+            <label>
+              {t(
+                L(
+                  "Громкость дорожки",
+                  "Soundtrack volume",
+                  "Дыбыс жолының деңгейі",
+                ),
+              )}
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={value.soundtrack.volume}
+                onChange={(e) =>
+                  onChange({
+                    ...value,
+                    soundtrack: {
+                      ...value.soundtrack!,
+                      volume: +e.target.value,
+                    },
+                  })
+                }
+              />
+            </label>
+            <button
+              onClick={() => {
+                onChange({ ...value, soundtrack: undefined });
+                setSoundtrackUrl("");
+              }}
+            >
+              {t(L("Убрать дорожку", "Remove soundtrack", "Дыбыс жолын жою"))}
+            </button>
+          </>
+        )}
+      </div>
       <div className="timeline">
         {value.clips.map((clip, i) => (
           <div className="clip" key={clip.id}>
@@ -684,6 +886,47 @@ function VideoEditor({
             </button>
           </div>
         </>
+      )}
+      {cur && (
+        <div className="grid3">
+          <label>
+            {t(
+              L(
+                "Затемнение в начале и конце, с",
+                "Fade in/out, seconds",
+                "Басында және соңында бәсеңдеу, секунд",
+              ),
+            )}
+            <input
+              type="range"
+              min={0}
+              max={Math.min(3, (cur.end - cur.start) / 2)}
+              step={0.1}
+              value={cur.fade ?? 0}
+              onChange={(e) => edit({ fade: +e.target.value })}
+            />
+          </label>
+          <label>
+            {t(L("Яркость клипа", "Clip brightness", "Клип жарықтығы"))}
+            <input
+              type="range"
+              min={0}
+              max={200}
+              value={cur.brightness ?? 100}
+              onChange={(e) => edit({ brightness: +e.target.value })}
+            />
+          </label>
+          <label>
+            {t(L("Контраст клипа", "Clip contrast", "Клип контрасты"))}
+            <input
+              type="range"
+              min={0}
+              max={200}
+              value={cur.contrast ?? 100}
+              onChange={(e) => edit({ contrast: +e.target.value })}
+            />
+          </label>
+        </div>
       )}
       <canvas ref={canvas} className={busy ? "video-preview" : "hidden"} />
       <div className="row">

@@ -1,3 +1,4 @@
+import { ensureSchema } from "./schema";
 import { curriculum, lessonMap } from "../src/platform/curriculum";
 import { kinds, validDocument, type ProjectKind } from "../src/platform/schema";
 interface Env {
@@ -418,6 +419,15 @@ async function route(req: Request, env: Env): Promise<Response> {
     ]);
     return json({ ok: true });
   }
+  if (path === "/api/practice" && method === "POST") {
+    const r = await db
+      .prepare(
+        "INSERT OR IGNORE INTO xp_events(id,user_id,kind,ref,xp,day,created_at) VALUES(?,?,'practice',?,15,?,?)",
+      )
+      .bind(crypto.randomUUID(), uid, `practice:${day()}`, day(), now())
+      .run();
+    return json({ awarded: !!r.meta.changes, xp: r.meta.changes ? 15 : 0 });
+  }
   if (path === "/api/stats" && method === "GET")
     return json(await stats(db, uid));
   if (path === "/api/progress" && method === "GET") {
@@ -493,11 +503,19 @@ async function route(req: Request, env: Env): Promise<Response> {
       .bind(uid)
       .first<{ n: number }>();
     if ((count?.n ?? 0) >= 500) return fail("QUOTA", 409);
-    const id = crypto.randomUUID(),
+    const supplied = typeof b.clientId === "string" ? b.clientId : null;
+    if (
+      supplied &&
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(
+        supplied,
+      )
+    )
+      return fail("INVALID_INPUT");
+    const id = supplied ?? crypto.randomUUID(),
       t = now();
     await db
       .prepare(
-        "INSERT INTO projects(id,owner_id,title,description,category,kind,content,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+        "INSERT OR IGNORE INTO projects(id,owner_id,title,description,category,kind,content,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
       )
       .bind(
         id,
@@ -511,10 +529,11 @@ async function route(req: Request, env: Env): Promise<Response> {
         t,
       )
       .run();
-    return json(
-      await db.prepare("SELECT * FROM projects WHERE id=?").bind(id).first(),
-      201,
-    );
+    const project = await db
+      .prepare("SELECT * FROM projects WHERE id=? AND owner_id=?")
+      .bind(id, uid)
+      .first();
+    return project ? json(project, 201) : fail("CONFLICT", 409);
   }
   const pm = path.match(/^\/api\/projects\/([\w-]+)$/);
   if (pm) {
@@ -687,6 +706,7 @@ async function route(req: Request, env: Env): Promise<Response> {
 export default {
   async fetch(req: Request, env: Env) {
     try {
+      await ensureSchema(env.DB);
       return await route(req, env);
     } catch (e) {
       console.error("API error", e instanceof Error ? e.message : "unknown");

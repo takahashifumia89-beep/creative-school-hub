@@ -1,3 +1,4 @@
+import { PageIntro } from "@/features/shared/PageIntro";
 import {
   lazy,
   Suspense,
@@ -71,6 +72,8 @@ export default function Studio({
     [state, setState] = useState(""),
     [blocked, setBlocked] = useState(false),
     [recovery, setRecovery] = useState<Draft | null>(null);
+  const createKey = useRef(crypto.randomUUID());
+  const ownCreated = useRef<string | null>(null);
   const saved = useRef(""),
     latest = useRef(draft),
     lock = useRef(false);
@@ -99,6 +102,10 @@ export default function Studio({
     }
   }, [id, kind, t]);
   useEffect(() => {
+    if (id && ownCreated.current === id) {
+      ownCreated.current = null;
+      return;
+    }
     let local: Draft | null = null;
     try {
       const parsed = draftSchema.safeParse(
@@ -174,9 +181,16 @@ export default function Studio({
       const p = await api<Project>(
         snapshot.id ? `/projects/${snapshot.id}` : "/projects",
         snapshot.id ? "PATCH" : "POST",
-        { ...snapshot, kind },
+        { ...snapshot, kind, clientId: createKey.current },
       );
-      const d = { ...snapshot, id: p.id, version: p.version };
+      const d = {
+        ...snapshot,
+        title: p.title,
+        description: p.description ?? "",
+        content: p.content ?? snapshot.content,
+        id: p.id,
+        version: p.version,
+      };
       saved.current = JSON.stringify(d);
       setDraft((current) => ({ ...current, id: p.id, version: p.version }));
       setState(t(L("Сохранено", "Saved", "Сақталды")));
@@ -187,6 +201,7 @@ export default function Studio({
         /* storage blocked */
       }
       if (!snapshot.id) {
+        ownCreated.current = p.id;
         if (
           latest.current.content !== snapshot.content ||
           latest.current.title !== snapshot.title ||
@@ -242,37 +257,34 @@ export default function Studio({
       );
     }
   };
+  const title = t(
+    kind === "3d"
+      ? L("3D-студия.", "3D studio.", "3D студия.")
+      : kind === "design"
+        ? L("Дизайн-студия.", "Design studio.", "Дизайн студия.")
+        : kind === "image"
+          ? L("Фото-студия.", "Photo studio.", "Фото студия.")
+          : kind === "video"
+            ? L("Видеомонтаж.", "Video editing.", "Бейнемонтаж.")
+            : L("Заметки.", "Notes.", "Жазбалар."),
+  );
   return (
-    <section>
-      <div className="page-head">
-        <div>
-          <p className="eyebrow">CREATIVE WORKSPACE / {kind.toUpperCase()}</p>
-          <h1>{t(L("Студия", "Studio", "Студия"))}</h1>
-          <p>
-            {t(
-              L(
-                "Автосохранение • локальное восстановление • контроль версий",
-                "Autosave • local recovery • version protection",
-                "Автосақтау • жергілікті қалпына келтіру • нұсқаны қорғау",
-              ),
-            )}
-          </p>
-        </div>
-        <span role="status">
-          {state ||
-            (!dirty && ready
-              ? t(L("Сохранено", "Saved", "Сақталды"))
-              : t(
-                  L(
-                    "Есть изменения",
-                    "Unsaved changes",
-                    "Сақталмаған өзгерістер",
-                  ),
-                ))}
-        </span>
-      </div>
+    <div className="mx-auto max-w-[1320px] px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
+      <PageIntro
+        eyebrow={t(
+          L("Творческая студия", "Creative studio", "Шығармашылық студия"),
+        )}
+        title={title}
+        description={t(
+          L(
+            "Создавайте, сохраняйте в проекты или скачивайте исходник.",
+            "Create, save to your projects or download the source.",
+            "Жасаңыз, жобаға сақтаңыз немесе түпнұсқаны жүктеңіз.",
+          ),
+        )}
+      />
       {recovery && (
-        <div className="notice">
+        <div className="mb-5 rounded-xl border border-primary/40 bg-primary/5 p-4 text-xs">
           {t(
             L(
               "Найден локальный черновик.",
@@ -289,24 +301,34 @@ export default function Studio({
               }));
               setRecovery(null);
             }}
+            className="ml-3 rounded-full border border-border px-4 py-2"
           >
             {t(L("Восстановить", "Restore", "Қалпына келтіру"))}
           </button>
           <button
             onClick={() => {
-              localStorage.removeItem(storageKey);
+              try {
+                localStorage.removeItem(storageKey);
+              } catch {}
               setRecovery(null);
             }}
+            className="ml-2 px-3 py-2"
           >
             {t(L("Отбросить", "Discard", "Жою"))}
           </button>
         </div>
       )}
       {error && (
-        <div className="error" role="alert">
+        <div
+          className="mb-5 rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-xs text-destructive"
+          role="alert"
+        >
           {error}
           {id && (
-            <button onClick={() => void load()}>
+            <button
+              onClick={() => void load()}
+              className="ml-3 rounded-full border border-border px-4 py-2"
+            >
               {t(
                 L(
                   "Загрузить с сервера",
@@ -318,97 +340,128 @@ export default function Studio({
           )}
         </div>
       )}
-      <div className="studio-meta">
-        <label>
-          {t(L("Название", "Title", "Атауы"))}
-          <input
-            value={draft.title}
-            maxLength={120}
-            onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
-          />
-        </label>
-        <label>
-          {t(L("Описание", "Description", "Сипаттама"))}
-          <textarea
-            value={draft.description}
-            maxLength={1000}
-            onChange={(e) =>
-              setDraft((d) => ({ ...d, description: e.target.value }))
-            }
-          />
-        </label>
-        <div className="row">
-          <button
-            disabled={!ready || blocked || !draft.title.trim()}
-            onClick={() => void save()}
-          >
-            {t(L("Сохранить", "Save", "Сақтау"))}
-          </button>
-          <button
-            onClick={() =>
-              download(
-                `${draft.title || "project"}.json`,
-                JSON.stringify({ kind, ...draft }, null, 2),
-              )
-            }
-          >
-            JSON ↓
-          </button>
-          <label className="file-button">
-            JSON ↑
-            <input
-              type="file"
-              accept="application/json,.json"
-              onChange={(e) => void importFile(e.target.files?.[0])}
-            />
-          </label>
-        </div>
-      </div>
-      {ready ? (
-        <Suspense
-          fallback={
-            <p>
+      <div className="grid gap-5 lg:grid-cols-[1.4fr_.6fr]">
+        <section className="rounded-2xl border border-border bg-card p-4 sm:p-5">
+          {ready ? (
+            <Suspense fallback={<p className="p-8">…</p>}>
+              {kind === "design" ? (
+                <Design value={JSON.parse(draft.content)} onChange={update} />
+              ) : kind === "3d" ? (
+                <Model value={JSON.parse(draft.content)} onChange={update} />
+              ) : kind === "notes" ? (
+                <textarea
+                  rows={20}
+                  value={draft.content}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, content: e.target.value }))
+                  }
+                  className="w-full rounded-lg border border-border bg-background p-3"
+                />
+              ) : (
+                <div className="platform media-tools">
+                  <Media
+                    kind={kind}
+                    value={JSON.parse(draft.content)}
+                    onChange={update}
+                  />
+                </div>
+              )}
+            </Suspense>
+          ) : (
+            <p className="p-8 text-center text-sm text-muted-foreground">
               {t(
                 L(
-                  "Загрузка редактора…",
-                  "Loading editor…",
-                  "Редактор жүктелуде…",
+                  "Проект не загружен. Редактирование заблокировано.",
+                  "Project not loaded. Editing is blocked.",
+                  "Жоба жүктелмеді. Өңдеу бұғатталған.",
                 ),
               )}
             </p>
-          }
-        >
-          {kind === "design" ? (
-            <Design value={JSON.parse(draft.content)} onChange={update} />
-          ) : kind === "3d" ? (
-            <Model value={JSON.parse(draft.content)} onChange={update} />
-          ) : kind === "notes" ? (
-            <textarea
-              rows={20}
-              value={draft.content}
+          )}
+        </section>
+        <aside className="h-fit rounded-2xl border border-border bg-card p-5">
+          <div className="font-mono-ui text-[10px] uppercase tracking-widest text-muted-foreground">
+            {t(
+              id
+                ? L("Редактирование", "Editing", "Өңдеу")
+                : L("Новый проект", "New project", "Жаңа жоба"),
+            )}
+          </div>
+          <label className="mt-5 block text-xs font-medium">
+            {t(L("Название", "Title", "Атауы"))}
+            <input
+              value={draft.title}
+              maxLength={120}
               onChange={(e) =>
-                setDraft((d) => ({ ...d, content: e.target.value }))
+                setDraft((d) => ({ ...d, title: e.target.value }))
               }
+              className="mt-2 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary"
             />
-          ) : (
-            <Media
-              kind={kind}
-              value={JSON.parse(draft.content)}
-              onChange={update}
+          </label>
+          <label className="mt-4 block text-xs font-medium">
+            {t(L("Описание", "Description", "Сипаттама"))}
+            <textarea
+              rows={5}
+              value={draft.description}
+              maxLength={1000}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, description: e.target.value }))
+              }
+              className="mt-2 w-full resize-none rounded-lg border border-border bg-background p-3 text-sm outline-none focus:border-primary"
             />
-          )}
-        </Suspense>
-      ) : (
-        <p>
-          {t(
-            L(
-              "Проект не загружен. Редактирование заблокировано.",
-              "Project not loaded. Editing is blocked.",
-              "Жоба жүктелмеді. Өңдеу бұғатталған.",
-            ),
-          )}
-        </p>
-      )}
-    </section>
+          </label>
+          <button
+            disabled={!ready || blocked || !draft.title.trim()}
+            onClick={() => void save()}
+            className="mt-5 w-full rounded-lg bg-primary py-3 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+          >
+            {t(L("Сохранить", "Save", "Сақтау"))}
+          </button>
+          <p className="mt-3 text-xs text-muted-foreground" role="status">
+            {(lock.current ? state : "") ||
+              (!dirty && ready
+                ? t(L("Сохранено", "Saved", "Сақталды"))
+                : t(
+                    L(
+                      "Есть изменения",
+                      "Unsaved changes",
+                      "Сақталмаған өзгерістер",
+                    ),
+                  ))}
+          </p>
+          <p className="mt-2 text-[10px] text-muted-foreground">
+            {t(
+              L(
+                "Автосохранение и локальное восстановление включены.",
+                "Autosave and local recovery are enabled.",
+                "Автосақтау және жергілікті қалпына келтіру қосылған.",
+              ),
+            )}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              onClick={() =>
+                download(
+                  `${draft.title || "project"}.json`,
+                  JSON.stringify({ kind, ...draft }, null, 2),
+                )
+              }
+              className="rounded-lg border border-border px-3 py-2 text-xs"
+            >
+              JSON ↓
+            </button>
+            <label className="relative cursor-pointer overflow-hidden rounded-lg border border-border px-3 py-2 text-xs">
+              JSON ↑
+              <input
+                type="file"
+                accept="application/json,.json"
+                className="absolute inset-0 cursor-pointer opacity-0"
+                onChange={(e) => void importFile(e.target.files?.[0])}
+              />
+            </label>
+          </div>
+        </aside>
+      </div>
+    </div>
   );
 }

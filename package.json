@@ -1,0 +1,8 @@
+{
+  "name": "creative-school-hub",
+  "private": true,
+  "scripts": {
+    "build": "npm ci --prefix creative-school && npm run build --prefix creative-school",
+    "deploy": "npm run deploy --prefix creative-school"
+  }
+}

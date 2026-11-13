@@ -12,17 +12,17 @@ Quotas: 500 projects per account, 200,000 characters per document, 500 design sh
 
 ## Learning
 
-The 23 pre-existing lesson IDs remain intact; 9 new lessons cover image editing, video editing and UX. Each lesson has trilingual core material, a practical brief, and two knowledge questions (64 total). Russian extended reading from the original repository is retained as an optional appendix; it has not been translated into English or Kazakh. Practical exercises are self-reviewed, not teacher-graded. The server validates submitted answer indexes before recording progress. Answers necessarily exist in a downloadable client catalog: these are learning checks, not secure certification exams.
+The 23 pre-existing lesson IDs remain intact; 9 new lessons cover image editing, video editing and UX. Each lesson has trilingual core material, a practical brief, and two knowledge questions (64 total). Each course also has a distinct downloadable capstone brief with three self-review criteria. Russian extended reading from the original repository is retained as an optional appendix; it has not been translated into English or Kazakh. Practical exercises are self-reviewed, not teacher-graded. The server validates submitted answer indexes before recording progress. Answers necessarily exist in a downloadable client catalog: these are learning checks, not secure certification exams.
 
 Offline submissions use per-account queues, are retried on reconnection or manually, and do not claim server XP until acknowledged. D1 triggers atomically record lesson/project XP. Course awards are included in the lesson batch and uniquely keyed. Existing XP is preserved. Permanent badge records survive deleting/unpublishing projects and ending a streak. Activity days use UTC+5, and sign-in alone does not extend a practice streak.
 
 ## Media
 
-Image and video source files stay on the user's device. Only edit settings and source filenames persist to D1; users must reselect originals on reopening. No claim of cloud media storage is made. Images accept PNG, JPEG and WebP up to 20 MB / 40 megapixels. PNG export is capped at 4096 pixels on the longest side; cropping is centered. Color management, RAW, masks and advanced retouching are not implemented.
+Image and video source files stay on the user's device. Only edit settings and source filenames persist to D1; users must reselect originals on reopening. No claim of cloud media storage is made. Images accept PNG, JPEG and WebP up to 20 MB / 40 megapixels. PNG export is capped at 4096 pixels on the longest side; cropping is centered. Mirroring, blur, sepia and reset are supported. Color management, RAW, masks and advanced retouching are not implemented.
 
-Video accepts browser-decodable sources up to 250 MB each / 2h per source. Export is 16:9 WebM at 1280×720 or 720×405, with clip audio and static titles, up to 10 minutes in real time. Keep the tab foregrounded during export. Supported codecs vary by browser. MP4 encoding, proxy media, effects, transitions, multitrack compositing, audio mixing/normalization and background rendering are not implemented. Source filenames are relink hints; choosing the wrong file with the same name is possible.
+Video accepts browser-decodable sources up to 250 MB each / 2h per source. Export is 16:9 WebM at 1280×720 or 720×405, with clip audio, an independent soundtrack, per-clip fade in/out, brightness/contrast and static titles, up to 10 minutes in real time. Keep the tab foregrounded during export. Supported codecs vary by browser. MP4 encoding, proxy media, effects, transitions, multitrack compositing, advanced multitrack audio automation/loudness normalization and background rendering are not implemented. Source filenames are relink hints; choosing the wrong file with the same name is possible.
 
-The 3D studio assembles primitives, transforms and materials. GLB exports scene geometry/materials (not the editor camera/grid/lights). It is not a mesh topology, sculpting, rigging or animation editor. The 2D studio supports basic vector layout, not full professional illustration or desktop publishing.
+The 3D studio assembles primitives, transforms and materials, with an object list, names, visibility and wireframe view. GLB exports scene geometry/materials (not the editor camera/grid/lights). It is not a mesh topology, sculpting, rigging or animation editor. The 2D studio supports vector layout with layer locking, visibility and stroke controls, not full professional illustration or desktop publishing.
 
 ## Security and accounts
 
@@ -38,4 +38,8 @@ Account deletion cascades through projects, sessions, progress and rewards. Acco
 
 Free resource downloads work without a payment provider. Paid products, creator sales, checkout, refunds, taxes, moderation workflows and seller payouts require separate integration and operational policies. Do not add a payment button that falsely reports a purchase.
 
-No production deployment or remote database migration is performed by local testing. Apply migrations after taking a production backup and validate with the owner's Cloudflare account before rollout. Review translations with native speakers, test WebGL on real devices and Safari/Firefox media support, run an accessibility audit and production load tests before treating this as a mature production platform.
+No production deployment or remote database migration is performed by local testing. The Worker automatically adds missing schema elements on the first API request and marks the five migrations applied, so no manual migration action is required for this release. Automatic schema setup and legacy-data preservation are tested against SQLite and a fresh local D1 instance. Keep production backups enabled and inspect the Cloudflare rollout status. Review translations with native speakers, test WebGL on real devices and Safari/Firefox media support, run an accessibility audit and production load tests before treating this as a mature production platform.
+
+## Visual continuity
+
+The original `main` landing composition, colors, fonts, sidebar, dashboard and project/portfolio cards are retained. Localization runs inside React through translation keys and templates; no DOM mutation translator is used. New editors and settings extend the existing theme.

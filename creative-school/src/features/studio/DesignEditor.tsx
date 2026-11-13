@@ -1,3 +1,4 @@
+import { useLocale, L } from "@/platform/locale";
 import { useEditorText } from "@/platform/editor-labels";
 import { useRef, useState } from "react";
 import {
@@ -21,6 +22,10 @@ export type Shape = {
   w: number;
   h: number;
   fill: string;
+  hidden?: boolean;
+  locked?: boolean;
+  stroke?: string;
+  strokeWidth?: number;
   text?: string;
   size?: number;
   rot?: number;
@@ -70,6 +75,7 @@ export function DesignEditor({
   onChange: (doc: DesignDoc) => void;
 }) {
   const tx = useEditorText();
+  const { t } = useLocale();
   const W = value.w ?? 800,
     H = value.h ?? 500;
   const [sel, setSel] = useState<string | null>(null);
@@ -108,6 +114,7 @@ export function DesignEditor({
   };
   const live = (p: Partial<Shape>) =>
     cur &&
+    !cur.locked &&
     onChange({
       ...value,
       shapes: value.shapes.map((s) => (s.id === cur.id ? { ...s, ...p } : s)),
@@ -121,7 +128,7 @@ export function DesignEditor({
       w: 170,
       h: 110,
       fill: type === "text" ? "#1a1a1a" : "#e8590c",
-      text: tx("\u0422\u0435\u043A\u0441\u0442"),
+      text: tx("Текст"),
       size: 40,
       rot: 0,
       op: 1,
@@ -133,18 +140,18 @@ export function DesignEditor({
     setSel(s.id);
   };
   const duplicate = () => {
-    if (!cur) return;
+    if (!cur || cur.locked) return;
     const c = { ...cur, id: crypto.randomUUID(), x: cur.x + 20, y: cur.y + 20 };
     edit({ ...value, shapes: [...value.shapes, c] });
     setSel(c.id);
   };
   const remove = () => {
-    if (!cur) return;
+    if (!cur || cur.locked) return;
     edit({ ...value, shapes: value.shapes.filter((s) => s.id !== cur.id) });
     setSel(null);
   };
   const reorder = (up: boolean) => {
-    if (!cur) return;
+    if (!cur || cur.locked) return;
     const a = [...value.shapes],
       i = a.findIndex((s) => s.id === cur.id),
       j = i + (up ? 1 : -1);
@@ -153,7 +160,7 @@ export function DesignEditor({
     edit({ ...value, shapes: a });
   };
   const center = (axis: "x" | "y") => {
-    if (!cur) return;
+    if (!cur || cur.locked) return;
     const b = bounds(cur);
     begin();
     live(
@@ -190,9 +197,7 @@ export function DesignEditor({
                 w: 0,
                 h: 0,
                 fill: "#ffffff",
-                text: tx(
-                  "\u0422\u0432\u043E\u0439 \u0437\u0430\u0433\u043E\u043B\u043E\u0432\u043E\u043A",
-                ),
+                text: tx("Твой заголовок"),
                 size: 56,
               },
               {
@@ -204,9 +209,7 @@ export function DesignEditor({
                 w: 0,
                 h: 0,
                 fill: "#bbbbbb",
-                text: tx(
-                  "\u041F\u043E\u0434\u0437\u0430\u0433\u043E\u043B\u043E\u0432\u043E\u043A \u0438 \u0434\u0430\u0442\u0430",
-                ),
+                text: tx("Подзаголовок и дата"),
                 size: 24,
                 bold: false,
               },
@@ -236,9 +239,7 @@ export function DesignEditor({
                 w: 0,
                 h: 0,
                 fill: "#1a1a1a",
-                text: tx(
-                  "\u0418\u043C\u044F \u0424\u0430\u043C\u0438\u043B\u0438\u044F",
-                ),
+                text: tx("Имя Фамилия"),
                 size: 44,
               },
               {
@@ -250,7 +251,7 @@ export function DesignEditor({
                 w: 0,
                 h: 0,
                 fill: "#555555",
-                text: tx("\u0414\u0438\u0437\u0430\u0439\u043D\u0435\u0440"),
+                text: tx("Дизайнер"),
                 size: 22,
                 bold: false,
               },
@@ -274,6 +275,7 @@ export function DesignEditor({
   ) => {
     e.stopPropagation();
     setSel(s.id);
+    if (s.locked) return;
     begin();
     const p = pt(e);
     act.current = { mode, corner, sx: p.x, sy: p.y, o: s };
@@ -404,7 +406,7 @@ export function DesignEditor({
       <div className="mb-3 flex flex-wrap gap-2">
         <button className={btn} onClick={undo} disabled={!past.current.length}>
           <Undo2 size={14} />
-          {tx("\u041E\u0442\u043C\u0435\u043D\u0438\u0442\u044C")}
+          {tx("Отменить")}
         </button>
         <button
           className={btn}
@@ -412,7 +414,7 @@ export function DesignEditor({
           disabled={!future.current.length}
         >
           <Redo2 size={14} />
-          {tx("\u0412\u0435\u0440\u043D\u0443\u0442\u044C")}
+          {tx("Вернуть")}
         </button>
         <select
           className={btn}
@@ -429,14 +431,10 @@ export function DesignEditor({
           ))}
         </select>
         <button className={btn} onClick={() => template("poster")}>
-          {tx(
-            "\u0428\u0430\u0431\u043B\u043E\u043D: \u043F\u043E\u0441\u0442\u0435\u0440",
-          )}
+          {tx("Шаблон: постер")}
         </button>
         <button className={btn} onClick={() => template("card")}>
-          {tx(
-            "\u0428\u0430\u0431\u043B\u043E\u043D: \u0432\u0438\u0437\u0438\u0442\u043A\u0430",
-          )}
+          {tx("Шаблон: визитка")}
         </button>
       </div>
       <svg
@@ -451,124 +449,121 @@ export function DesignEditor({
         onPointerDown={() => setSel(null)}
       >
         <rect width={W} height={H} fill={value.bg} />
-        {value.shapes.map((s) => {
-          const b = bounds(s);
-          return (
-            <g
-              key={s.id}
-              transform={rotT(s)}
-              opacity={s.op ?? 1}
-              style={{ cursor: "move" }}
-              onPointerDown={(e) => start(e, s, "move")}
-              onDoubleClick={() => {
-                if (s.type !== "text") return;
-                const t = window.prompt(
-                  tx("\u0422\u0435\u043A\u0441\u0442"),
-                  s.text,
-                );
-                if (t !== null)
-                  edit({
-                    ...value,
-                    shapes: value.shapes.map((x) =>
-                      x.id === s.id ? { ...x, text: t } : x,
-                    ),
-                  });
-              }}
-            >
-              {s.type === "rect" && (
-                <rect
-                  x={s.x}
-                  y={s.y}
-                  width={s.w}
-                  height={s.h}
-                  rx={s.r ?? 0}
-                  fill={s.fill}
-                />
-              )}
-              {s.type === "ellipse" && (
-                <ellipse
-                  cx={s.x + s.w / 2}
-                  cy={s.y + s.h / 2}
-                  rx={s.w / 2}
-                  ry={s.h / 2}
-                  fill={s.fill}
-                />
-              )}
-              {s.type === "triangle" && (
-                <polygon
-                  points={`${s.x + s.w / 2},${s.y} ${s.x + s.w},${s.y + s.h} ${s.x},${s.y + s.h}`}
-                  fill={s.fill}
-                />
-              )}
-              {s.type === "text" && (
-                <text
-                  x={s.x}
-                  y={s.y}
-                  fontSize={s.size}
-                  fill={s.fill}
-                  dominantBaseline="hanging"
-                  fontFamily={s.font ?? FONTS[0]}
-                  fontWeight={s.bold ? 700 : 400}
-                >
-                  {s.text}
-                </text>
-              )}
-              {s.id === sel && (
-                <rect
-                  data-ui
-                  x={s.x - 2}
-                  y={s.y - 2}
-                  width={b.w + 4}
-                  height={b.h + 4}
-                  fill="none"
-                  stroke="#2563eb"
-                  strokeWidth={1.5}
-                />
-              )}
-              {s.id === sel &&
-                corners.map(([c, cx, cy]) => (
+        {value.shapes
+          .filter((s) => !s.hidden)
+          .map((s) => {
+            const b = bounds(s);
+            return (
+              <g
+                key={s.id}
+                transform={rotT(s)}
+                opacity={s.op ?? 1}
+                stroke={s.stroke ?? "none"}
+                strokeWidth={s.strokeWidth ?? 0}
+                style={{ cursor: "move" }}
+                onPointerDown={(e) => start(e, s, "move")}
+                onDoubleClick={() => {
+                  if (s.type !== "text" || s.locked) return;
+                  const t = window.prompt(tx("Текст"), s.text);
+                  if (t !== null)
+                    edit({
+                      ...value,
+                      shapes: value.shapes.map((x) =>
+                        x.id === s.id ? { ...x, text: t } : x,
+                      ),
+                    });
+                }}
+              >
+                {s.type === "rect" && (
                   <rect
-                    key={c}
+                    x={s.x}
+                    y={s.y}
+                    width={s.w}
+                    height={s.h}
+                    rx={s.r ?? 0}
+                    fill={s.fill}
+                  />
+                )}
+                {s.type === "ellipse" && (
+                  <ellipse
+                    cx={s.x + s.w / 2}
+                    cy={s.y + s.h / 2}
+                    rx={s.w / 2}
+                    ry={s.h / 2}
+                    fill={s.fill}
+                  />
+                )}
+                {s.type === "triangle" && (
+                  <polygon
+                    points={`${s.x + s.w / 2},${s.y} ${s.x + s.w},${s.y + s.h} ${s.x},${s.y + s.h}`}
+                    fill={s.fill}
+                  />
+                )}
+                {s.type === "text" && (
+                  <text
+                    x={s.x}
+                    y={s.y}
+                    fontSize={s.size}
+                    fill={s.fill}
+                    dominantBaseline="hanging"
+                    fontFamily={s.font ?? FONTS[0]}
+                    fontWeight={s.bold ? 700 : 400}
+                  >
+                    {s.text}
+                  </text>
+                )}
+                {s.id === sel && (
+                  <rect
                     data-ui
-                    x={cx - 6}
-                    y={cy - 6}
-                    width={12}
-                    height={12}
-                    rx={3}
-                    fill="#fff"
+                    x={s.x - 2}
+                    y={s.y - 2}
+                    width={b.w + 4}
+                    height={b.h + 4}
+                    fill="none"
                     stroke="#2563eb"
                     strokeWidth={1.5}
-                    style={{ cursor: `${c}-resize` }}
-                    onPointerDown={(e) => start(e, s, "resize", c)}
                   />
-                ))}
-            </g>
-          );
-        })}
+                )}
+                {s.id === sel &&
+                  corners.map(([c, cx, cy]) => (
+                    <rect
+                      key={c}
+                      data-ui
+                      x={cx - 6}
+                      y={cy - 6}
+                      width={12}
+                      height={12}
+                      rx={3}
+                      fill="#fff"
+                      stroke="#2563eb"
+                      strokeWidth={1.5}
+                      style={{ cursor: `${c}-resize` }}
+                      onPointerDown={(e) => start(e, s, "resize", c)}
+                    />
+                  ))}
+              </g>
+            );
+          })}
       </svg>
       <div className="mt-3 flex flex-wrap gap-2">
         <button className={btn} onClick={() => add("rect")}>
           <Square size={14} />
-          {tx(
-            "\u041F\u0440\u044F\u043C\u043E\u0443\u0433\u043E\u043B\u044C\u043D\u0438\u043A",
-          )}
+          {tx("Прямоугольник")}
         </button>
         <button className={btn} onClick={() => add("ellipse")}>
           <Circle size={14} />
-          {tx("\u042D\u043B\u043B\u0438\u043F\u0441")}
+          {tx("Эллипс")}
         </button>
         <button className={btn} onClick={() => add("triangle")}>
           <Triangle size={14} />
-          {tx(
-            "\u0422\u0440\u0435\u0443\u0433\u043E\u043B\u044C\u043D\u0438\u043A",
-          )}
+          {tx("Треугольник")}
         </button>
         <button className={btn} onClick={() => add("text")}>
           <Type size={14} />
-          {tx("\u0422\u0435\u043A\u0441\u0442")}
+          {tx("Текст")}
         </button>
         <label className={`${btn} cursor-pointer`}>
-          {tx("\u0424\u043E\u043D")}
+          {tx("Фон")}
           <input
             type="color"
             value={value.bg}
@@ -584,6 +579,35 @@ export function DesignEditor({
           <Download size={14} /> SVG
         </button>
       </div>
+      {cur && (
+        <div className="mt-3 flex flex-wrap gap-3">
+          <label className={lbl}>
+            {t(L("Обводка", "Stroke", "Жиек"))}
+            <input
+              type="color"
+              value={cur.stroke ?? "#000000"}
+              onFocus={begin}
+              onChange={(e) =>
+                live({
+                  stroke: e.target.value,
+                  strokeWidth: cur.strokeWidth || 1,
+                })
+              }
+            />
+          </label>
+          <label className={lbl}>
+            {t(L("Толщина обводки", "Stroke width", "Жиек қалыңдығы"))}
+            <input
+              type="range"
+              min={0}
+              max={30}
+              value={cur.strokeWidth ?? 0}
+              onPointerDown={begin}
+              onChange={(e) => live({ strokeWidth: +e.target.value })}
+            />
+          </label>
+        </div>
+      )}
       {cur ? (
         <div className="mt-4 grid gap-3 rounded-xl border border-border bg-background p-4 sm:grid-cols-2">
           {(["x", "y", "w", "h"] as const).map((key) => (
@@ -610,7 +634,7 @@ export function DesignEditor({
             </label>
           ))}
           <label className={lbl}>
-            {tx("\u0426\u0432\u0435\u0442")}
+            {tx("Цвет")}
             <input
               type="color"
               value={cur.fill}
@@ -620,9 +644,7 @@ export function DesignEditor({
             />
           </label>
           <label className={lbl}>
-            {tx(
-              "\u041F\u0440\u043E\u0437\u0440\u0430\u0447\u043D\u043E\u0441\u0442\u044C:",
-            )}
+            {tx("Прозрачность:")}
             {Math.round((cur.op ?? 1) * 100)}%
             <input
               type="range"
@@ -636,7 +658,7 @@ export function DesignEditor({
             />
           </label>
           <label className={lbl}>
-            {tx("\u041F\u043E\u0432\u043E\u0440\u043E\u0442:")}
+            {tx("Поворот:")}
             {cur.rot ?? 0}°
             <input
               type="range"
@@ -651,7 +673,7 @@ export function DesignEditor({
           {cur.type === "text" ? (
             <>
               <label className={lbl}>
-                {tx("\u0422\u0435\u043A\u0441\u0442")}
+                {tx("Текст")}
                 <input
                   value={cur.text ?? ""}
                   onFocus={begin}
@@ -660,7 +682,7 @@ export function DesignEditor({
                 />
               </label>
               <label className={lbl}>
-                {tx("\u0420\u0430\u0437\u043C\u0435\u0440:")}
+                {tx("Размер:")}
                 {cur.size}
                 <input
                   type="range"
@@ -673,7 +695,7 @@ export function DesignEditor({
                 />
               </label>
               <label className={lbl}>
-                {tx("\u0428\u0440\u0438\u0444\u0442")}
+                {tx("Шрифт")}
                 <select
                   value={cur.font ?? FONTS[0]}
                   onChange={(e) =>
@@ -706,15 +728,13 @@ export function DesignEditor({
                     })
                   }
                 />
-                {tx("\u0416\u0438\u0440\u043D\u044B\u0439")}
+                {tx("Жирный")}
               </label>
             </>
           ) : (
             cur.type === "rect" && (
               <label className={lbl}>
-                {tx(
-                  "\u0421\u043A\u0440\u0443\u0433\u043B\u0435\u043D\u0438\u0435:",
-                )}
+                {tx("Скругление:")}
                 {cur.r ?? 0}
                 <input
                   type="range"
@@ -730,60 +750,89 @@ export function DesignEditor({
           )}
           <div className="flex flex-wrap gap-2 sm:col-span-2">
             <button className={btn} onClick={() => center("x")}>
-              {tx("\u041F\u043E \u0446\u0435\u043D\u0442\u0440\u0443 \u2194")}
+              {tx("По центру ↔")}
             </button>
             <button className={btn} onClick={() => center("y")}>
-              {tx("\u041F\u043E \u0446\u0435\u043D\u0442\u0440\u0443 \u2195")}
+              {tx("По центру ↕")}
             </button>
             <button className={btn} onClick={() => reorder(true)}>
               <ArrowUp size={14} />
-              {tx("\u0412\u044B\u0448\u0435")}
+              {tx("Выше")}
             </button>
             <button className={btn} onClick={() => reorder(false)}>
               <ArrowDown size={14} />
-              {tx("\u041D\u0438\u0436\u0435")}
+              {tx("Ниже")}
             </button>
             <button className={btn} onClick={duplicate}>
               <Copy size={14} />
-              {tx("\u0414\u0443\u0431\u043B\u044C")}
+              {tx("Дубль")}
             </button>
             <button className={`${btn} text-destructive`} onClick={remove}>
               <Trash2 size={14} />
-              {tx("\u0423\u0434\u0430\u043B\u0438\u0442\u044C")}
+              {tx("Удалить")}
             </button>
           </div>
         </div>
       ) : (
         <p className="mt-4 text-xs text-muted-foreground">
           {tx(
-            "\u0412\u044B\u0431\u0435\u0440\u0438\u0442\u0435 \u0444\u0438\u0433\u0443\u0440\u0443, \u0447\u0442\u043E\u0431\u044B \u043C\u0435\u043D\u044F\u0442\u044C \u0435\u0451. \u0422\u044F\u043D\u0438\u0442\u0435 \u0437\u0430 \u0443\u0433\u043B\u044B, \u0447\u0442\u043E\u0431\u044B \u043C\u0435\u043D\u044F\u0442\u044C \u0440\u0430\u0437\u043C\u0435\u0440. \u0414\u0432\u043E\u0439\u043D\u043E\u0439 \u043A\u043B\u0438\u043A \u043F\u043E \u0442\u0435\u043A\u0441\u0442\u0443 \u0440\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u0443\u0435\u0442 \u0435\u0433\u043E. \u041A\u043B\u0430\u0432\u0438\u0448\u0438: Ctrl+Z, Ctrl+Y, Ctrl+D, Delete, \u0441\u0442\u0440\u0435\u043B\u043A\u0438.",
+            "Выберите фигуру, чтобы менять её. Тяните за углы, чтобы менять размер. Двойной клик по тексту редактирует его. Клавиши: Ctrl+Z, Ctrl+Y, Ctrl+D, Delete, стрелки.",
           )}
         </p>
       )}
       {value.shapes.length > 0 && (
         <div className="mt-4 rounded-xl border border-border bg-background p-3">
-          <div className="mb-2 text-xs font-semibold">
-            {tx("\u0421\u043B\u043E\u0438")}
-          </div>
+          <div className="mb-2 text-xs font-semibold">{tx("Слои")}</div>
           <div className="grid gap-1">
             {[...value.shapes].reverse().map((s) => (
-              <button
-                key={s.id}
-                onClick={() => setSel(s.id)}
-                className={`rounded-lg px-3 py-1.5 text-left text-xs ${s.id === sel ? "bg-primary/15 text-primary" : "hover:bg-muted"}`}
-              >
-                {s.type === "text"
-                  ? `${tx("Текст")}: ${s.text}`
-                  : {
-                      rect: tx(
-                        "\u041F\u0440\u044F\u043C\u043E\u0443\u0433\u043E\u043B\u044C\u043D\u0438\u043A",
+              <div key={s.id} className="flex items-center gap-1">
+                <button
+                  onClick={() => setSel(s.id)}
+                  className={`rounded-lg px-3 py-1.5 text-left text-xs ${s.id === sel ? "bg-primary/15 text-primary" : "hover:bg-muted"}`}
+                >
+                  {s.type === "text"
+                    ? `${tx("Текст")}: ${s.text}`
+                    : {
+                        rect: tx("Прямоугольник"),
+                        ellipse: tx("Эллипс"),
+                        triangle: tx("Треугольник"),
+                      }[s.type]}
+                </button>
+                <button
+                  className="ml-auto rounded-lg px-2 py-1.5 text-xs"
+                  aria-label={t(
+                    L("Видимость слоя", "Layer visibility", "Қабат көрінуі"),
+                  )}
+                  aria-pressed={!s.hidden}
+                  onClick={() =>
+                    edit({
+                      ...value,
+                      shapes: value.shapes.map((x) =>
+                        x.id === s.id ? { ...x, hidden: !x.hidden } : x,
                       ),
-                      ellipse: tx("\u042D\u043B\u043B\u0438\u043F\u0441"),
-                      triangle: tx(
-                        "\u0422\u0440\u0435\u0443\u0433\u043E\u043B\u044C\u043D\u0438\u043A",
+                    })
+                  }
+                >
+                  {s.hidden ? "○" : "●"}
+                </button>
+                <button
+                  className="rounded-lg px-2 py-1.5 text-xs"
+                  aria-label={t(
+                    L("Блокировка слоя", "Lock layer", "Қабатты құлыптау"),
+                  )}
+                  aria-pressed={!!s.locked}
+                  onClick={() =>
+                    edit({
+                      ...value,
+                      shapes: value.shapes.map((x) =>
+                        x.id === s.id ? { ...x, locked: !x.locked } : x,
                       ),
-                    }[s.type]}
-              </button>
+                    })
+                  }
+                >
+                  {s.locked ? "🔒" : "◇"}
+                </button>
+              </div>
             ))}
           </div>
         </div>

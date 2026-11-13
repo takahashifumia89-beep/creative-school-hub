@@ -169,18 +169,12 @@ test("three languages, keyboard navigation and responsive landing", async ({
   page,
 }) => {
   await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "Идеи становятся вашими работами." }),
-  ).toBeVisible();
+  await expect(page.locator("h1")).toContainText("Место для");
   await page.getByRole("button", { name: "EN", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "Turn your ideas into your next work." }),
-  ).toBeVisible();
+  await expect(page.locator("h1")).toContainText("A place for");
   await page.getByRole("button", { name: "ҚАЗ", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "Идеяларыңыз туындыға айналсын." }),
-  ).toBeVisible();
-  await expect(page.locator(".tool-card").first()).toHaveCSS(
+  await expect(page.locator("h1 span")).toContainText("идеяларыңызға");
+  await expect(page.locator("section.border-y").first()).toHaveCSS(
     "border-top-width",
     "1px",
   );
@@ -311,16 +305,14 @@ test("offline quiz queue syncs and stays isolated between accounts", async ({
   request,
 }) => {
   const a = await account(request);
-  await page
-    .context()
-    .addCookies([
-      {
-        name: "cs_session",
-        value: a.headers.Cookie.split("=")[1],
-        domain: "localhost",
-        path: "/",
-      },
-    ]);
+  await page.context().addCookies([
+    {
+      name: "cs_session",
+      value: a.headers.Cookie.split("=")[1],
+      domain: "localhost",
+      path: "/",
+    },
+  ]);
   await page.goto("/learn/visual-basics/vis-1");
   await page.getByLabel("Практика выполнена и проверена мной.").check();
   await page
@@ -351,16 +343,14 @@ test("offline quiz queue syncs and stays isolated between accounts", async ({
     page.getByRole("button", { name: "Пройдено", exact: true }),
   ).toBeVisible();
   const b = await account(request);
-  await page
-    .context()
-    .addCookies([
-      {
-        name: "cs_session",
-        value: b.headers.Cookie.split("=")[1],
-        domain: "localhost",
-        path: "/",
-      },
-    ]);
+  await page.context().addCookies([
+    {
+      name: "cs_session",
+      value: b.headers.Cookie.split("=")[1],
+      domain: "localhost",
+      path: "/",
+    },
+  ]);
   await page.reload();
   await expect(
     page.getByRole("button", {
@@ -372,4 +362,68 @@ test("offline quiz queue syncs and stays isolated between accounts", async ({
     (await (await request.get("/api/progress", { headers: b.headers })).json())
       .done,
   ).toEqual([]);
+});
+
+test("original landing composition and account sign-out remain functional", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  await expect(page.locator("h1")).toContainText("Место для");
+  await expect(page.locator("h1")).toHaveClass(/font-display/);
+  await expect(
+    page.getByText("Практика, а не бесконечная лента.", { exact: true }),
+  ).toBeVisible();
+  const a = await account(request);
+  await page.context().addCookies([
+    {
+      name: "cs_session",
+      value: a.headers.Cookie.split("=")[1],
+      domain: "localhost",
+      path: "/",
+    },
+  ]);
+  await page.goto("/dashboard");
+  await expect(
+    page.getByRole("heading", { name: "Добро пожаловать, Creative." }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Выйти из аккаунта", exact: true })
+    .click();
+  await expect(page).toHaveURL(/auth/);
+  let reads = 0;
+  page.on("request", (r) => {
+    if (r.url().endsWith("/api/me")) reads++;
+  });
+  await page.waitForTimeout(500);
+  expect(reads).toBeLessThan(4);
+});
+
+test("retrying initial save does not create duplicate projects or XP", async ({
+  request,
+}) => {
+  const a = await account(request),
+    clientId = crypto.randomUUID();
+  const payload = {
+    title: "Idempotent save",
+    kind: "notes",
+    content: "Draft",
+    clientId,
+  };
+  const first = await request.post("/api/projects", {
+    headers: a.headers,
+    data: payload,
+  });
+  const second = await request.post("/api/projects", {
+    headers: a.headers,
+    data: payload,
+  });
+  expect(first.status()).toBe(201);
+  expect(second.status()).toBe(201);
+  expect((await first.json()).id).toBe((await second.json()).id);
+  const stats = await (
+    await request.get("/api/stats", { headers: a.headers })
+  ).json();
+  expect(stats.projectsTotal).toBe(1);
+  expect(stats.xp).toBe(20);
 });

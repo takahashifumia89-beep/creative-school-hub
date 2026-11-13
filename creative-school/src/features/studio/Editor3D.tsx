@@ -1,3 +1,4 @@
+import { useLocale, L } from "@/platform/locale";
 import { useEditorText } from "@/platform/editor-labels";
 import { useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
@@ -27,6 +28,8 @@ import {
 export type Obj = {
   id: string;
   kind: "box" | "sphere" | "cone" | "torus" | "cylinder";
+  name?: string;
+  hidden?: boolean;
   pos: [number, number, number];
   rotY: number;
   rotX?: number;
@@ -41,6 +44,7 @@ export type SceneDoc = {
   objects: Obj[];
   light?: number;
   ground?: boolean;
+  wireframe?: boolean;
 };
 export const emptyScene: SceneDoc = {
   bg: "#1b1b22",
@@ -69,6 +73,7 @@ export function Editor3D({
   onChange: (doc: SceneDoc) => void;
 }) {
   const tx = useEditorText();
+  const { t } = useLocale();
   const [sel, setSel] = useState<string | null>(null);
   const [mode, setMode] = useState<"translate" | "rotate" | "scale">(
     "translate",
@@ -161,7 +166,7 @@ export function Editor3D({
     const { GLTFExporter } =
       await import("three/examples/jsm/exporters/GLTFExporter.js");
     const scene = new Scene();
-    for (const o of value.objects) {
+    for (const o of value.objects.filter((o) => !o.hidden)) {
       const geometry =
         o.kind === "box"
           ? new BoxGeometry(1.4, 1.4, 1.4)
@@ -180,6 +185,7 @@ export function Editor3D({
           roughness: o.rough ?? 0.5,
         }),
       );
+      mesh.name = o.name ?? o.kind;
       mesh.position.set(...o.pos);
       mesh.rotation.set(
         ((o.rotX ?? 0) * Math.PI) / 180,
@@ -239,7 +245,7 @@ export function Editor3D({
       <div className="mb-3 flex flex-wrap gap-2">
         <button className={btn} onClick={undo} disabled={!past.current.length}>
           <Undo2 size={14} />
-          {tx("\u041E\u0442\u043C\u0435\u043D\u0438\u0442\u044C")}
+          {tx("Отменить")}
         </button>
         <button
           className={btn}
@@ -247,21 +253,13 @@ export function Editor3D({
           disabled={!future.current.length}
         >
           <Redo2 size={14} />
-          {tx("\u0412\u0435\u0440\u043D\u0443\u0442\u044C")}
+          {tx("Вернуть")}
         </button>
         {(
           [
-            [
-              "translate",
-              tx("\u0414\u0432\u0438\u0433\u0430\u0442\u044C"),
-              Move3d,
-            ],
-            [
-              "rotate",
-              tx("\u0412\u0440\u0430\u0449\u0430\u0442\u044C"),
-              Rotate3d,
-            ],
-            ["scale", tx("\u0420\u0430\u0437\u043C\u0435\u0440"), Scale3d],
+            ["translate", tx("Двигать"), Move3d],
+            ["rotate", tx("Вращать"), Rotate3d],
+            ["scale", tx("Размер"), Scale3d],
           ] as const
         ).map(([m, label, Icon]) => (
           <button
@@ -303,56 +301,61 @@ export function Editor3D({
               <meshStandardMaterial color="#2a2a33" />
             </mesh>
           )}
-          {value.objects.map((o) => {
-            const mesh = (
-              <mesh
-                key={o.id}
-                ref={o.id === sel ? ref : undefined}
-                position={o.pos}
-                rotation={[
-                  ((o.rotX ?? 0) * Math.PI) / 180,
-                  (o.rotY * Math.PI) / 180,
-                  ((o.rotZ ?? 0) * Math.PI) / 180,
-                ]}
-                scale={o.scale}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setSel(o.id);
-                }}
-              >
-                {o.kind === "box" && <boxGeometry args={[1.4, 1.4, 1.4]} />}
-                {o.kind === "sphere" && <sphereGeometry args={[0.8, 32, 32]} />}
-                {o.kind === "cone" && <coneGeometry args={[0.8, 1.6, 32]} />}
-                {o.kind === "torus" && (
-                  <torusGeometry args={[0.7, 0.28, 24, 48]} />
-                )}
-                {o.kind === "cylinder" && (
-                  <cylinderGeometry args={[0.6, 0.6, 1.6, 32]} />
-                )}
-                <meshStandardMaterial
-                  color={o.color}
-                  metalness={o.metal ?? 0.1}
-                  roughness={o.rough ?? 0.5}
-                  emissive={o.id === sel ? "#333333" : "#000000"}
-                />
-              </mesh>
-            );
-            return o.id === sel ? (
-              <TransformControls
-                key={o.id}
-                mode={mode}
-                showX
-                showY
-                showZ
-                onMouseDown={begin}
-                onMouseUp={sync}
-              >
-                {mesh}
-              </TransformControls>
-            ) : (
-              mesh
-            );
-          })}
+          {value.objects
+            .filter((o) => !o.hidden)
+            .map((o) => {
+              const mesh = (
+                <mesh
+                  key={o.id}
+                  ref={o.id === sel ? ref : undefined}
+                  position={o.pos}
+                  rotation={[
+                    ((o.rotX ?? 0) * Math.PI) / 180,
+                    (o.rotY * Math.PI) / 180,
+                    ((o.rotZ ?? 0) * Math.PI) / 180,
+                  ]}
+                  scale={o.scale}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSel(o.id);
+                  }}
+                >
+                  {o.kind === "box" && <boxGeometry args={[1.4, 1.4, 1.4]} />}
+                  {o.kind === "sphere" && (
+                    <sphereGeometry args={[0.8, 32, 32]} />
+                  )}
+                  {o.kind === "cone" && <coneGeometry args={[0.8, 1.6, 32]} />}
+                  {o.kind === "torus" && (
+                    <torusGeometry args={[0.7, 0.28, 24, 48]} />
+                  )}
+                  {o.kind === "cylinder" && (
+                    <cylinderGeometry args={[0.6, 0.6, 1.6, 32]} />
+                  )}
+                  <meshStandardMaterial
+                    color={o.color}
+                    metalness={o.metal ?? 0.1}
+                    roughness={o.rough ?? 0.5}
+                    wireframe={!!value.wireframe}
+                    emissive={o.id === sel ? "#333333" : "#000000"}
+                  />
+                </mesh>
+              );
+              return o.id === sel ? (
+                <TransformControls
+                  key={o.id}
+                  mode={mode}
+                  showX
+                  showY
+                  showZ
+                  onMouseDown={begin}
+                  onMouseUp={sync}
+                >
+                  {mesh}
+                </TransformControls>
+              ) : (
+                mesh
+              );
+            })}
           <OrbitControls makeDefault />
         </Canvas>
       </div>
@@ -363,7 +366,7 @@ export function Editor3D({
           </button>
         ))}
         <label className={`${btn} cursor-pointer`}>
-          {tx("\u0424\u043E\u043D")}
+          {tx("Фон")}
           <input
             type="color"
             value={value.bg}
@@ -378,10 +381,10 @@ export function Editor3D({
             checked={value.ground !== false}
             onChange={(e) => edit({ ...value, ground: e.target.checked })}
           />
-          {tx("\u041F\u043E\u043B")}
+          {tx("Пол")}
         </label>
         <label className={`${btn}`}>
-          {tx("\u0421\u0432\u0435\u0442")}
+          {tx("Свет")}
           <input
             type="range"
             min={0.2}
@@ -396,10 +399,62 @@ export function Editor3D({
           />
         </label>
       </div>
+      <div className="mt-4 rounded-xl border border-border bg-background p-3">
+        <label className="mb-3 flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={!!value.wireframe}
+            onChange={(e) => edit({ ...value, wireframe: e.target.checked })}
+          />
+          {t(L("Каркасный вид", "Wireframe view", "Қаңқалық көрініс"))}
+        </label>
+        <div className="grid gap-1">
+          {value.objects.map((o, i) => (
+            <div key={o.id} className="flex items-center gap-2">
+              <button
+                className={`${btn} flex-1 text-left ${o.id === sel ? "border-primary" : ""}`}
+                onClick={() => setSel(o.id)}
+              >
+                {o.name ||
+                  `${tx(kinds.find((k) => k.kind === o.kind)!.label)} ${i + 1}`}
+              </button>
+              <button
+                className={btn}
+                aria-label={t(
+                  L("Видимость объекта", "Object visibility", "Нысан көрінуі"),
+                )}
+                aria-pressed={!o.hidden}
+                onClick={() =>
+                  edit({
+                    ...value,
+                    objects: value.objects.map((x) =>
+                      x.id === o.id ? { ...x, hidden: !x.hidden } : x,
+                    ),
+                  })
+                }
+              >
+                {o.hidden ? "○" : "●"}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+      {cur && (
+        <label className="mt-4 block text-xs">
+          {t(L("Имя объекта", "Object name", "Нысан атауы"))}
+          <input
+            value={cur.name ?? ""}
+            maxLength={80}
+            onFocus={begin}
+            onChange={(e) => live({ name: e.target.value })}
+            className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-2"
+          />
+        </label>
+      )}
       {cur ? (
         <div className="mt-4 grid gap-3 rounded-xl border border-border bg-background p-4 sm:grid-cols-2">
           <label className={lbl}>
-            {tx("\u0426\u0432\u0435\u0442")}
+            {tx("Цвет")}
             <input
               type="color"
               value={cur.color}
@@ -409,7 +464,7 @@ export function Editor3D({
             />
           </label>
           <label className={lbl}>
-            {tx("\u0420\u0430\u0437\u043C\u0435\u0440:")}
+            {tx("Размер:")}
             {cur.scale.toFixed(1)}
             <input
               type="range"
@@ -423,7 +478,7 @@ export function Editor3D({
             />
           </label>
           <label className={lbl}>
-            {tx("\u041C\u0435\u0442\u0430\u043B\u043B\u0438\u043A:")}
+            {tx("Металлик:")}
             {(cur.metal ?? 0.1).toFixed(1)}
             <input
               type="range"
@@ -437,9 +492,7 @@ export function Editor3D({
             />
           </label>
           <label className={lbl}>
-            {tx(
-              "\u0428\u0435\u0440\u043E\u0445\u043E\u0432\u0430\u0442\u043E\u0441\u0442\u044C:",
-            )}
+            {tx("Шероховатость:")}
             {(cur.rough ?? 0.5).toFixed(1)}
             <input
               type="range"
@@ -470,7 +523,7 @@ export function Editor3D({
             </label>
           ))}
           <label className={lbl}>
-            {tx("\u041F\u043E\u0432\u043E\u0440\u043E\u0442:")}
+            {tx("Поворот:")}
             {cur.rotY}°
             <input
               type="range"
@@ -485,18 +538,18 @@ export function Editor3D({
           <div className="flex gap-2 sm:col-span-2">
             <button className={btn} onClick={duplicate}>
               <Copy size={14} />
-              {tx("\u0414\u0443\u0431\u043B\u044C")}
+              {tx("Дубль")}
             </button>
             <button className={`${btn} text-destructive`} onClick={remove}>
               <Trash2 size={14} />
-              {tx("\u0423\u0434\u0430\u043B\u0438\u0442\u044C")}
+              {tx("Удалить")}
             </button>
           </div>
         </div>
       ) : (
         <p className="mt-4 text-xs text-muted-foreground">
           {tx(
-            "\u0414\u043E\u0431\u0430\u0432\u044C\u0442\u0435 \u0444\u0438\u0433\u0443\u0440\u0443 \u0438 \u043A\u043B\u0438\u043A\u043D\u0438\u0442\u0435 \u043F\u043E \u043D\u0435\u0439: \u043F\u043E\u044F\u0432\u0438\u0442\u0441\u044F \u043C\u0430\u043D\u0438\u043F\u0443\u043B\u044F\u0442\u043E\u0440 \u0434\u043B\u044F \u043F\u0435\u0440\u0435\u043C\u0435\u0449\u0435\u043D\u0438\u044F, \u0432\u0440\u0430\u0449\u0435\u043D\u0438\u044F \u0438 \u0440\u0430\u0437\u043C\u0435\u0440\u0430. \u041A\u0430\u043C\u0435\u0440\u0430: \u043C\u044B\u0448\u044C \u0438\u043B\u0438 \u043F\u0430\u043B\u0435\u0446. \u041A\u043B\u0430\u0432\u0438\u0448\u0438: Ctrl+Z, Ctrl+Y, Ctrl+D, Delete.",
+            "Добавьте фигуру и кликните по ней: появится манипулятор для перемещения, вращения и размера. Камера: мышь или палец. Клавиши: Ctrl+Z, Ctrl+Y, Ctrl+D, Delete.",
           )}
         </p>
       )}

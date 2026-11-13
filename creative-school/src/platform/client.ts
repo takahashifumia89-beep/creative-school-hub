@@ -93,7 +93,7 @@ export async function api<T = Record<string, unknown>>(
   }
   const payload = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (payload.error === "UNAUTHORIZED")
+    if (payload.error === "UNAUTHORIZED" && path !== "/me")
       window.dispatchEvent(new Event("cs-session-expired"));
     throw new ApiError(payload.error ?? "SERVER_ERROR", res.status);
   }

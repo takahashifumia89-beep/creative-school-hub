@@ -12,6 +12,10 @@ export const L = (ru: string, en: string, kk: string): Localized => [
   en,
   kk,
 ];
+let activeLanguage: Lang = "ru";
+export function currentLang() {
+  return activeLanguage;
+}
 const Locale = createContext<Lang>("ru");
 export function useLocale() {
   const lang = useContext(Locale);
@@ -30,6 +34,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     }
   });
   useEffect(() => {
+    activeLanguage = lang;
     document.documentElement.lang = lang;
     try {
       localStorage.setItem("cs-lang", lang);

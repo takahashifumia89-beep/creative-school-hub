@@ -38,14 +38,12 @@ Browser tests use a separate disposable local D1 database at `.wrangler/e2e-stat
 
 ## Deploy an existing installation
 
-Back up D1 first. Set the Cloudflare project root to **`creative-school`**. Verify the D1 binding/database ID in `wrangler.toml`; do not replace an existing database just to deploy this update.
+The original landing page, navigation, dashboard and card styling are preserved. New tools use the same theme tokens.
 
-```sh
-npm ci
-npm run db:remote
-npm run deploy
-```
+Cloudflare can build from either the repository root or `creative-school/`; both have a Wrangler configuration targeting the same existing D1 database. Node 22 is pinned in both locations. At the root, `npm run build` installs the nested lockfile and builds the app. In `creative-school/`, use `npm ci && npm run build`.
 
-Apply **all five** migrations in order. Migration 0005 preserves existing accounts and projects, adds project versions/types, request counters and permanent badge records. Password verification remains compatible with the original hash format. Deploy the new Worker only after migration 0005 succeeds. Review Cloudflare build settings to prevent an old auto-deploy command from skipping migrations. Database backups and production rollout require access to the owner's Cloudflare account.
+The Worker performs an **additive, idempotent schema upgrade** on its first API request. It creates missing tables/columns/indexes/triggers without deleting accounts or projects and records the five migrations in D1's migration ledger. Existing password hashes remain compatible. Manual migration commands still work on fresh installations but are not required for this release. A failed upgrade returns an error and can retry on a subsequent request; the application does not claim a successful save until the API acknowledges it.
+
+Keep production backups enabled and verify the D1 binding/database ID in `wrangler.toml`. Never replace an existing database just to deploy this update.
 
 See [the architecture and limits](creative-school/docs/PLATFORM.md) for supported formats, recovery behavior, security boundaries and remaining work. This repository does not claim feature parity with desktop creative suites.

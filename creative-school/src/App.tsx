@@ -1,527 +1,607 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { useCopy } from "@/platform/copy";
+import { type ReactNode, useEffect, useState } from "react";
 import { Link, Route, Switch, useLocation } from "wouter";
+import { ErrorBoundary } from "@/components/error-boundary";
 import {
+  CircleCheck,
+  Compass,
+  Eye,
+  Flame,
+  FolderKanban,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Moon,
   Palette,
   Box,
-  Film,
-  Image,
-  BookOpen,
-  Folder,
-  Globe,
-  ShoppingBag,
-  Award,
-  Settings as SettingsIcon,
-  Menu,
-  X,
-  Sun,
-  Moon,
-  LogOut,
-  Search,
   Bell,
+  Search,
+  ShoppingBag,
+  Sparkles,
+  Sun,
+  Trophy,
+  X,
 } from "lucide-react";
+import { PageIntro } from "@/features/shared/PageIntro";
+import { AuthGate } from "@/components/auth-gate";
+import { RoleGate } from "@/components/role-gate";
+import { AuthPage } from "@/features/auth/AuthPage";
+import { NotificationCenter } from "@/features/notifications/NotificationCenter";
+import { OnboardingPage } from "@/features/onboarding/OnboardingPage";
+import { ProjectsPage } from "@/features/projects/ProjectsPage";
+import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import {
-  LocaleProvider,
-  L,
-  useLocale,
-  type Localized,
-} from "./platform/locale";
-import { api, message, type User } from "./platform/client";
-import { Auth, Settings, Notifications } from "./platform/Account";
-import { Projects, PublicPage, Marketplace, Progress } from "./platform/Pages";
-import { ErrorBoundary } from "./components/error-boundary";
-import "./platform/platform.css";
-const Studio = lazy(() => import("./platform/Studio"));
-const Learning = lazy(() => import("./platform/Learning"));
-const items: { href: string; label: Localized; icon: typeof Palette }[] = [
-  { href: "/dashboard", label: L("Обзор", "Overview", "Шолу"), icon: Award },
-  { href: "/learn", label: L("Обучение", "Learning", "Оқу"), icon: BookOpen },
+  LandingPage,
+  MarketplacePage,
+  PortfolioPage,
+} from "@/features/shared/RussianPages";
+import { AchievementsPage } from "@/features/achievements/AchievementsPage";
+import { LocaleProvider } from "@/platform/locale";
+import { lazy, Suspense } from "react";
+import { Settings } from "@/platform/Account";
+import { PublicPage } from "@/platform/Pages";
+import { api, type User } from "@/platform/client";
+import { authChanged } from "@/lib/api";
+import "@/platform/platform.css";
+const LearningPage = lazy(() => import("@/platform/Learning"));
+const StudioPage = lazy(() => import("@/platform/Studio"));
+function WithUser({ children }: { children: (user: User) => ReactNode }) {
+  const tx = useCopy();
+  const [user, setUser] = useState<User | null>(null);
+  useEffect(() => {
+    void api<{
+      user: User;
+    }>("/me").then((r) => setUser(r.user));
+  }, []);
+  return user ? (
+    <Suspense fallback={<p className="p-8">…</p>}>{children(user)}</Suspense>
+  ) : (
+    <p className="p-8">…</p>
+  );
+}
+import {
+  fetchStats,
+  getCurrentUser,
+  onAuthChange,
+  signOut,
+  type Stats,
+} from "@/lib/api";
+const navGroups = [
   {
-    href: "/projects",
-    label: L("Проекты", "Projects", "Жобалар"),
-    icon: Folder,
+    label: "Рабочее пространство",
+    items: [
+      { href: "/dashboard", label: "Обзор", icon: LayoutDashboard },
+      { href: "/learn", label: "Обучение", icon: Compass },
+      { href: "/projects", label: "Проекты", icon: FolderKanban },
+      { href: "/portfolio", label: "Портфолио", icon: Eye },
+    ],
   },
   {
-    href: "/portfolio",
-    label: L("Портфолио", "Portfolio", "Портфолио"),
-    icon: Globe,
+    label: "Студии",
+    items: [
+      { href: "/studio/design", label: "Дизайн-студия", icon: Palette },
+      { href: "/studio/3d", label: "3D-студия", icon: Box },
+      { href: "/studio/image", label: "Фото-студия", icon: Palette },
+      { href: "/studio/video", label: "Видеомонтаж", icon: Box },
+      { href: "/marketplace", label: "Магазин", icon: ShoppingBag },
+    ],
   },
   {
-    href: "/studio/design",
-    label: L("Дизайн", "Design", "Дизайн"),
-    icon: Palette,
-  },
-  {
-    href: "/studio/3d",
-    label: L("3D-моделирование", "3D modeling", "3D модельдеу"),
-    icon: Box,
-  },
-  {
-    href: "/studio/image",
-    label: L("Фото", "Image editing", "Сурет өңдеу"),
-    icon: Image,
-  },
-  {
-    href: "/studio/video",
-    label: L("Видеомонтаж", "Video editing", "Бейнемонтаж"),
-    icon: Film,
-  },
-  {
-    href: "/marketplace",
-    label: L("Магазин", "Resource shop", "Дүкен"),
-    icon: ShoppingBag,
-  },
-  {
-    href: "/notifications",
-    label: L("Уведомления", "Notifications", "Хабарландырулар"),
-    icon: Bell,
-  },
-  {
-    href: "/settings",
-    label: L("Настройки", "Settings", "Баптаулар"),
-    icon: SettingsIcon,
+    label: "Прогресс",
+    items: [
+      { href: "/achievements", label: "Достижения", icon: Trophy },
+      { href: "/notifications", label: "Уведомления", icon: Bell },
+      { href: "/settings", label: "Настройки", icon: Menu },
+    ],
   },
 ];
-function Platform() {
-  const { t } = useLocale(),
-    [location, navigate] = useLocation(),
-    [user, setUser] = useState<User | null>(null),
-    [loaded, setLoaded] = useState(false),
-    [error, setError] = useState(""),
-    [open, setOpen] = useState(false),
-    [dark, setDark] = useState(() => {
-      try {
-        return localStorage.getItem("creative-school-theme") === "dark";
-      } catch {
-        return false;
-      }
-    }),
-    [search, setSearch] = useState("");
-  async function load() {
-    setError("");
-    try {
-      const r = await api<{ user: User }>("/me");
-      setUser(r.user);
-    } catch (e) {
-      if ((e as { status?: number }).status !== 401) setError(t(message(e)));
-    } finally {
-      setLoaded(true);
-    }
-  }
-  useEffect(() => {
-    void load();
-    const expired = () => setUser(null);
-    window.addEventListener("cs-session-expired", expired);
-    return () => window.removeEventListener("cs-session-expired", expired);
-  }, []);
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-    document.documentElement.style.colorScheme = dark ? "dark" : "light";
-    try {
-      localStorage.setItem("creative-school-theme", dark ? "dark" : "light");
-    } catch {
-      /* browser storage */
-    }
-  }, [dark]);
-  const publicRoute =
-    location === "/" ||
-    location === "/auth" ||
-    location.startsWith("/u/") ||
-    location.startsWith("/p/");
-  useEffect(() => {
-    setOpen(false);
-    window.scrollTo(0, 0);
-    if (loaded && !user && !publicRoute && !error) navigate("/auth");
-  }, [location, loaded, user, publicRoute, error]);
-  const shell = user && !publicRoute;
+function Logo({ light = false }: { light?: boolean }) {
+  const tx = useCopy();
   return (
-    <div className="platform">
-      <a className="skip-link" href="#main">
-        {t(L("К содержимому", "Skip to content", "Мазмұнға өту"))}
-      </a>
-      {shell && (
-        <>
-          <button
-            className="mobile-menu"
-            aria-label={t(L("Меню", "Menu", "Мәзір"))}
-            onClick={() => setOpen(!open)}
-          >
-            {open ? <X /> : <Menu />}
-          </button>
-          {open && (
-            <button
-              className="sidebar-backdrop"
-              aria-label={t(L("Закрыть меню", "Close menu", "Мәзірді жабу"))}
-              onClick={() => setOpen(false)}
-            />
-          )}
-          <aside className={open ? "sidebar is-open" : "sidebar"}>
-            <Link href="/dashboard" className="brand">
-              ✳ creative school<span>.</span>
-            </Link>
-            <p className="eyebrow">YOUR CREATIVE SPACE</p>
-            <nav>
-              {items.map(({ href, label, icon: Icon }) => (
-                <Link
-                  key={href}
-                  href={href}
-                  aria-current={location === href ? "page" : undefined}
-                >
-                  <Icon size={17} />
-                  {t(label)}
-                </Link>
-              ))}
-            </nav>
-            <div className="sidebar-footer">
-              <Link href="/settings">{user.user_metadata.display_name}</Link>
-              <button
-                aria-label={t(L("Выйти", "Sign out", "Шығу"))}
-                onClick={async () => {
-                  try {
-                    await api("/auth/signout", "POST", {});
-                    setUser(null);
-                    navigate("/");
-                  } catch (e) {
-                    setError(t(message(e)));
-                  }
-                }}
-              >
-                <LogOut size={17} />
-              </button>
-            </div>
-          </aside>
-        </>
-      )}
-      <div
-        className={shell ? "platform-content with-sidebar" : "platform-content"}
+    <Link
+      href="/"
+      data-testid="link-brand"
+      className={`flex items-center gap-2.5 ${light ? "text-[#f2efe5]" : "text-foreground"}`}
+    >
+      <span className="grid h-8 w-8 place-items-center rounded-[9px] bg-primary text-primary-foreground shadow-sm">
+        <Sparkles size={16} strokeWidth={2.5} />
+      </span>
+      <span className="font-display text-[17px] font-semibold tracking-[-.04em]">
+        creative school<span className="text-primary">.</span>
+      </span>
+    </Link>
+  );
+}
+function ThemeToggle({
+  isDark,
+  onToggle,
+}: {
+  isDark: boolean;
+  onToggle: () => void;
+}) {
+  const tx = useCopy();
+  return (
+    <button
+      data-testid="button-toggle-theme"
+      onClick={onToggle}
+      aria-pressed={isDark}
+      aria-label={
+        isDark ? tx("Включить дневной режим") : tx("Включить ночной режим")
+      }
+      className="grid h-9 w-9 place-items-center rounded-full border border-border bg-card text-muted-foreground transition hover:-translate-y-0.5 hover:text-foreground"
+    >
+      {isDark ? <Sun size={16} /> : <Moon size={16} />}
+    </button>
+  );
+}
+function AppShell({
+  children,
+  isDark,
+  onToggle,
+  onToast,
+}: {
+  children: ReactNode;
+  isDark: boolean;
+  onToggle: () => void;
+  onToast: (text: string) => void;
+}) {
+  const tx = useCopy();
+  const [location, setLocation] = useLocation();
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setLocation("/learn?search=1");
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [setLocation]);
+  const [profileName, setProfileName] = useState(tx("Мой профиль"));
+  const [stats, setStats] = useState<Stats | null>(null);
+  useEffect(() => {
+    const load = () => {
+      void getCurrentUser().then(({ user }) => {
+        if (user) void fetchStats().then((r) => setStats(r.data));
+        else setStats(null);
+      });
+    };
+    load();
+    window.addEventListener("creative-school-stats-change", load);
+    return () =>
+      window.removeEventListener("creative-school-stats-change", load);
+  }, [location]);
+  useEffect(() => {
+    const updateName = (
+      user: {
+        user_metadata: {
+          display_name: string;
+        };
+      } | null,
+    ) => {
+      if (user?.user_metadata.display_name)
+        setProfileName(user.user_metadata.display_name);
+    };
+    void getCurrentUser().then(({ user }) => updateName(user));
+    return onAuthChange(updateName);
+  }, []);
+  return (
+    <div className="grain min-h-[100dvh] bg-background text-foreground">
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex w-[244px] flex-col border-r border-sidebar-border bg-sidebar px-4 py-5 transition-transform duration-300 lg:translate-x-0 ${open ? "translate-x-0" : "-translate-x-full"}`}
       >
-        <header>
-          {!shell && (
-            <Link href="/" className="brand">
-              ✳ creative school<span>.</span>
-            </Link>
-          )}
-          <span className="header-motto">
-            {t(
-              L(
-                "Создавайте смело.",
-                "Make something that matters.",
-                "Батыл жасаңыз.",
-              ),
-            )}
-          </span>
-          <div className="row">
-            {shell && (
-              <form
-                className="header-search"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  navigate(`/learn?q=${encodeURIComponent(search)}`);
+        <div className="flex items-center justify-between px-2">
+          <Logo />
+          <button
+            data-testid="button-close-sidebar"
+            onClick={() => setOpen(false)}
+            className="rounded-md p-1.5 text-muted-foreground lg:hidden"
+          >
+            <X size={17} />
+          </button>
+        </div>
+        <div className="mt-10 space-y-7 overflow-auto">
+          {navGroups.map((group) => (
+            <div key={tx(group.label)}>
+              <div className="mb-2 px-3 font-mono-ui text-[10px] font-medium uppercase tracking-[.18em] text-muted-foreground">
+                {tx(group.label)}
+              </div>
+              <nav className="space-y-1">
+                {group.items.map((item) => {
+                  const active = location === item.href;
+                  const Icon = item.icon;
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      data-testid={`link-nav-${item.label.toLowerCase().replaceAll(" ", "-")}`}
+                      onClick={() => setOpen(false)}
+                      className={`group flex items-center justify-between rounded-lg px-3 py-2.5 text-[13px] transition ${active ? "bg-sidebar-primary text-sidebar-primary-foreground font-semibold" : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"}`}
+                    >
+                      <span className="flex items-center gap-3">
+                        <Icon size={16} strokeWidth={active ? 2.5 : 1.8} />
+                        <span>{tx(item.label)}</span>
+                      </span>
+                    </Link>
+                  );
+                })}
+              </nav>
+            </div>
+          ))}
+        </div>
+        <div className="mt-auto space-y-3 pt-5">
+          <div className="rounded-xl border border-sidebar-border bg-sidebar-accent/50 p-3.5">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="font-mono-ui text-[10px] uppercase tracking-widest text-muted-foreground">
+                {tx("Ритм недели")}
+              </span>
+              <span className="text-primary">
+                <Flame size={14} fill="currentColor" />
+              </span>
+            </div>
+            <div className="flex items-end justify-between">
+              <span className="font-display text-2xl font-semibold">
+                {Math.min(stats?.weekDays ?? 0, stats?.weekGoal ?? 5)}
+                <span className="text-sm text-muted-foreground">
+                  /{stats?.weekGoal ?? 5}
+                </span>
+              </span>
+              <span className="text-right text-[11px] leading-tight text-muted-foreground">
+                {tx("дня в")}
+                <br />
+                {tx("студии")}
+              </span>
+            </div>
+            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background">
+              <div
+                className="h-full rounded-full bg-primary transition-all"
+                style={{
+                  width: `${Math.min(100, ((stats?.weekDays ?? 0) / (stats?.weekGoal ?? 5)) * 100)}%`,
                 }}
-              >
-                <label className="sr-only" htmlFor="global-search">
-                  {t(L("Найти курс", "Find a course", "Курс іздеу"))}
-                </label>
-                <input
-                  id="global-search"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder={t(
-                    L("Найти курс…", "Find a course…", "Курс іздеу…"),
-                  )}
-                />
-                <button aria-label={t(L("Поиск", "Search", "Іздеу"))}>
-                  <Search size={16} />
-                </button>
-              </form>
-            )}
+              />
+            </div>
+            <div className="mt-3 flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>
+                {tx("Уровень")}
+                {stats?.level ?? 1}
+              </span>
+              <span>
+                {stats?.xp ?? 0} / {stats?.nextLevelXp ?? 100} XP
+              </span>
+            </div>
+            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-background">
+              <div
+                className="h-full rounded-full bg-secondary transition-all"
+                style={{
+                  width: `${Math.round((stats?.levelProgress ?? 0) * 100)}%`,
+                }}
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-2.5 rounded-lg px-2 py-2">
+            <span className="grid h-8 w-8 place-items-center rounded-full bg-secondary font-display text-xs font-semibold text-secondary-foreground">
+              {profileName.slice(0, 2).toUpperCase()}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[12px] font-semibold">
+                {profileName}
+              </span>
+              <span className="block font-mono-ui text-[10px] text-muted-foreground">
+                {tx("Мой профиль")}
+              </span>
+            </span>
             <button
-              aria-label={t(
-                L("Переключить тему", "Toggle theme", "Тақырыпты ауыстыру"),
-              )}
-              onClick={() => setDark(!dark)}
+              aria-label={tx("Выйти из аккаунта")}
+              onClick={() => {
+                void signOut().then((error) =>
+                  error ? onToast(error) : setLocation("/auth"),
+                );
+              }}
+              className="rounded-md p-1 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
             >
-              {dark ? <Sun size={18} /> : <Moon size={18} />}
+              <LogOut size={15} />
             </button>
-            {!shell && (
-              <Link href={user ? "/dashboard" : "/auth"}>
-                {t(
-                  user
-                    ? L("Мой кабинет", "My workspace", "Менің кеңістігім")
-                    : L("Войти", "Sign in", "Кіру"),
-                )}
-              </Link>
-            )}
+          </div>
+        </div>
+      </aside>
+      {open && (
+        <button
+          data-testid="button-sidebar-overlay"
+          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-30 bg-foreground/20 backdrop-blur-sm lg:hidden"
+          aria-label="Close menu"
+        />
+      )}
+      <main className="min-h-[100dvh] lg:pl-[244px]">
+        <header className="sticky top-0 z-20 flex h-[68px] items-center justify-between border-b border-border/70 bg-background/85 px-5 backdrop-blur-md sm:px-8">
+          <button
+            data-testid="button-open-sidebar"
+            onClick={() => setOpen(true)}
+            aria-label={tx("Открыть меню")}
+            className="rounded-md p-2 text-muted-foreground hover:bg-muted lg:hidden"
+          >
+            <Menu size={19} />
+          </button>
+          <div className="hidden items-center gap-2 text-[12px] text-muted-foreground sm:flex">
+            <span className="font-mono-ui text-[10px] uppercase tracking-widest">
+              {tx("ТВОРЧЕСКАЯ ШКОЛА")}
+            </span>
+            <span className="h-1 w-1 rounded-full bg-primary" />
+            <span>{tx("Создавайте смело.")}</span>
+          </div>
+          <div className="ml-auto flex items-center gap-2.5">
+            <button
+              data-testid="button-search"
+              onClick={() => setLocation("/learn?search=1")}
+              className="hidden items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground transition hover:border-primary/60 sm:flex"
+            >
+              <Search size={14} />
+              {tx("Поиск")}
+              <span className="font-mono-ui text-[10px] opacity-60">⌘ K</span>
+            </button>
+            <ThemeToggle isDark={isDark} onToggle={onToggle} />
+            <Link
+              href="/notifications"
+              data-testid="link-header-notifications"
+              aria-label={tx("Уведомления")}
+              className="relative grid h-9 w-9 place-items-center rounded-full border border-border bg-card text-muted-foreground transition hover:text-foreground"
+            >
+              <Bell size={16} />
+              <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-secondary" />
+            </Link>
           </div>
         </header>
-        <main id="main">
-          {error && (
-            <div className="error" role="alert">
-              {error}
-              <button onClick={() => void load()}>
-                {t(L("Повторить", "Retry", "Қайталау"))}
-              </button>
-            </div>
-          )}
-          {!loaded && !publicRoute ? (
-            <section>{t(L("Загрузка…", "Loading…", "Жүктелуде…"))}</section>
-          ) : !publicRoute && !user ? null : (
-            <ErrorBoundary key={location}>
-              <Suspense
-                fallback={
-                  <section>
-                    {t(L("Загрузка…", "Loading…", "Жүктелуде…"))}
-                  </section>
-                }
-              >
-                <Switch>
-                  <Route path="/">
-                    <Landing />
-                  </Route>
-                  <Route path="/auth">
-                    <Auth onUser={setUser} />
-                  </Route>
-                  <Route path="/u/:id">
-                    {(p) => <PublicPage kind="profiles" id={p.id} />}
-                  </Route>
-                  <Route path="/p/:id">
-                    {(p) => <PublicPage kind="projects" id={p.id} />}
-                  </Route>
-                  <Route path="/dashboard">
-                    <Progress />
-                  </Route>
-                  <Route path="/achievements">
-                    <Progress />
-                  </Route>
-                  <Route path="/learn/:course/:lesson">
-                    {(p) => (
-                      <Learning
-                        user={user!}
-                        courseId={p.course}
-                        lessonId={p.lesson}
-                      />
-                    )}
-                  </Route>
-                  <Route path="/learn/:course">
-                    {(p) => <Learning user={user!} courseId={p.course} />}
-                  </Route>
-                  <Route path="/learn">
-                    <Learning user={user!} />
-                  </Route>
-                  <Route path="/studio/:kind">
-                    {(p) =>
-                      ["design", "3d", "image", "video", "notes"].includes(
-                        p.kind,
-                      ) ? (
-                        <Studio
-                          key={location + window.location.search}
-                          user={user!}
-                          kind={p.kind as "design"}
-                        />
-                      ) : (
-                        <Missing />
-                      )
-                    }
-                  </Route>
-                  <Route path="/projects">
-                    <Projects user={user!} />
-                  </Route>
-                  <Route path="/portfolio">
-                    <Projects user={user!} portfolio />
-                  </Route>
-                  <Route path="/marketplace">
-                    <Marketplace />
-                  </Route>
-                  <Route path="/settings">
-                    <Settings user={user!} onUser={setUser} />
-                  </Route>
-                  <Route path="/onboarding">
-                    <Settings user={user!} onUser={setUser} />
-                  </Route>
-                  <Route path="/notifications">
-                    <Notifications />
-                  </Route>
-                  <Route path="/admin">
-                    <Admin />
-                  </Route>
-                  <Route>
-                    <Missing />
-                  </Route>
-                </Switch>
-              </Suspense>
-            </ErrorBoundary>
-          )}
-        </main>
-        <footer>
-          © {new Date().getFullYear()} Creative School ·{" "}
-          {t(
-            L(
-              "Учиться. Создавать. Делиться.",
-              "Learn. Create. Share.",
-              "Оқу. Жасау. Бөлісу.",
-            ),
-          )}
-        </footer>
-      </div>
+        {children}
+      </main>
     </div>
   );
 }
-function Missing() {
-  const { t } = useLocale();
-  return (
-    <section>
-      <h1>404</h1>
-      <p>{t(L("Страница не найдена", "Page not found", "Бет табылмады"))}</p>
-      <Link href="/dashboard">
-        {t(L("В кабинет", "Open workspace", "Кеңістікке өту"))} →
-      </Link>
-    </section>
-  );
-}
 function Admin() {
-  const { t } = useLocale(),
+  const tx = useCopy(),
     [data, setData] = useState<Record<string, number> | null>(null),
     [error, setError] = useState("");
   useEffect(() => {
     void api<Record<string, number>>("/admin")
       .then(setData)
-      .catch((e) => setError(t(message(e))));
+      .catch(() => setError(tx("Доступ только для администратора")));
   }, []);
   return (
-    <section>
-      <h1>{t(L("Администрирование", "Administration", "Әкімшілік"))}</h1>
+    <div className="mx-auto max-w-[1200px] px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
+      <PageIntro
+        eyebrow="Управление"
+        title="Администрирование."
+        description=""
+      />
       {error ? (
         <p role="alert">{error}</p>
       ) : (
-        <pre>{JSON.stringify(data, null, 2)}</pre>
-      )}
-    </section>
-  );
-}
-function Landing() {
-  const { t } = useLocale();
-  return (
-    <>
-      <section className="hero">
-        <div>
-          <p className="eyebrow">THE NEXT THING YOU MAKE STARTS HERE</p>
-          <h1>
-            {t(
-              L(
-                "Идеи становятся\nвашими работами.",
-                "Turn your ideas\ninto your next work.",
-                "Идеяларыңыз\nтуындыға айналсын.",
-              ),
-            )}
-          </h1>
-          <p>
-            {t(
-              L(
-                "Практическое обучение, творческие студии и портфолио — в одном пространстве. На русском, английском и казахском.",
-                "Practical learning, creative studios and your portfolio in one workspace. In Russian, English and Kazakh.",
-                "Тәжірибелік оқу, шығармашылық студиялар мен портфолио — бір кеңістікте. Қазақша, орысша және ағылшынша.",
-              ),
-            )}
-          </p>
-          <div className="row">
-            <Link href="/auth" className="primary-link">
-              {t(L("Начать создавать", "Start creating", "Жасауды бастау"))} ↗
-            </Link>
-            <a href="#studios">
-              {t(
-                L(
-                  "Посмотреть возможности",
-                  "Explore the tools",
-                  "Құралдарды көру",
-                ),
-              )}{" "}
-              ↓
-            </a>
-          </div>
-          <div className="hero-stats">
-            <div>
-              <strong>8</strong>
-              {t(L("направлений", "learning paths", "оқу бағыты"))}
-            </div>
-            <div>
-              <strong>32</strong>
-              {t(L("уроков", "lessons", "сабақ"))}
-            </div>
-            <div>
-              <strong>4</strong>
-              {t(L("студии", "studios", "студия"))}
-            </div>
-          </div>
-        </div>
-        <div className="hero-art" aria-hidden="true">
-          <div className="art-grid" />
-          <div className="art-circle" />
-          <div className="art-block" />
-          <span className="art-label">
-            YOUR NEXT
-            <br />
-            BIG IDEA.
-          </span>
-          <span className="art-note">DESIGN · MODEL · EDIT · MAKE</span>
-        </div>
-      </section>
-      <section id="studios">
-        <p className="eyebrow">FROM FIRST SKETCH TO FINISHED WORK</p>
-        <h2 className="large-heading">
-          {t(
-            L(
-              "Ваш набор инструментов.",
-              "Your creative toolkit.",
-              "Шығармашылық құралдарыңыз.",
-            ),
-          )}
-        </h2>
-        <div className="grid2">
-          {items
-            .filter((i) => i.href.startsWith("/studio/"))
-            .map(({ href, label, icon: Icon }, i) => (
-              <article className="card tool-card" key={href}>
-                <Icon size={35} />
-                <h3>{t(label)}</h3>
-                <p>
-                  {t(
-                    [
-                      L(
-                        "Фигуры, текст, слои, шаблоны и экспорт PNG/SVG.",
-                        "Shapes, type, layers, templates and PNG/SVG export.",
-                        "Пішін, мәтін, қабат, үлгі және PNG/SVG экспорты.",
-                      ),
-                      L(
-                        "Примитивы, трансформации, материалы, свет и экспорт сцены.",
-                        "Primitives, transforms, materials, light and scene export.",
-                        "Примитив, түрлендіру, материал, жарық және сахна экспорты.",
-                      ),
-                      L(
-                        "Кадрирование, поворот, коррекция цвета и PNG.",
-                        "Crop, rotation, color adjustments and PNG.",
-                        "Қию, бұру, түсті түзету және PNG.",
-                      ),
-                      L(
-                        "Обрезка, порядок клипов, титры, звук и WebM.",
-                        "Trim, clip order, titles, audio and WebM.",
-                        "Қию, клип реті, титр, дыбыс және WebM.",
-                      ),
-                    ][i],
+        <div className="grid gap-4 sm:grid-cols-3">
+          {data &&
+            Object.entries(data).map(([key, value]) => (
+              <div
+                key={key}
+                className="rounded-2xl border border-border bg-card p-6"
+              >
+                <p className="text-xs text-muted-foreground">
+                  {tx(
+                    key === "users"
+                      ? "Пользователи"
+                      : key === "projects"
+                        ? "Проекты"
+                        : "Уроки",
                   )}
                 </p>
-                <Link href={href}>
-                  {t(L("Открыть студию", "Open studio", "Студияны ашу"))} ↗
-                </Link>
-              </article>
+                <p className="mt-4 font-display text-4xl">{value}</p>
+              </div>
             ))}
         </div>
-      </section>
+      )}
+    </div>
+  );
+}
+function RoutedErrorBoundary({ children }: { children: ReactNode }) {
+  const tx = useCopy();
+  const [location] = useLocation();
+  return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
+}
+function App() {
+  const tx = useCopy();
+  const [location] = useLocation();
+  const [isDark, setIsDark] = useState(() => {
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem("creative-school-theme");
+    } catch {}
+    if (saved === "dark") return true;
+    if (saved === "light") return false;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  });
+  const [toast, setToast] = useState("");
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", isDark);
+    document.documentElement.style.colorScheme = isDark ? "dark" : "light";
+    try {
+      localStorage.setItem("creative-school-theme", isDark ? "dark" : "light");
+    } catch {}
+  }, [isDark]);
+  const toggleTheme = () => setIsDark((current) => !current);
+  const notify = (text: string) => {
+    setToast(text);
+    window.setTimeout(() => setToast(""), 2800);
+  };
+  const publicRoute =
+    location === "/" ||
+    location === "/auth" ||
+    location.startsWith("/u/") ||
+    location.startsWith("/p/");
+  const content = (
+    <RoutedErrorBoundary>
+      <Suspense fallback={<p className="p-8">…</p>}>
+        <Switch>
+          <Route path="/">
+            {() => <LandingPage onTheme={toggleTheme} isDark={isDark} />}
+          </Route>
+          <Route path="/auth">{() => <AuthPage onToast={notify} />}</Route>
+          <Route path="/onboarding">
+            {() => <OnboardingPage onToast={notify} />}
+          </Route>
+          <Route path="/dashboard">
+            {() => <DashboardPage onToast={notify} />}
+          </Route>
+          <Route path="/u/:id">
+            {(p) => (
+              <div className="platform">
+                <PublicPage kind="profiles" id={p.id} />
+              </div>
+            )}
+          </Route>
+          <Route path="/p/:id">
+            {(p) => (
+              <div className="platform">
+                <PublicPage kind="projects" id={p.id} />
+              </div>
+            )}
+          </Route>
+          <Route path="/settings">
+            <WithUser>
+              {(user) => (
+                <div className="platform">
+                  <Settings user={user} onUser={() => authChanged()} />
+                </div>
+              )}
+            </WithUser>
+          </Route>
+          <Route path="/learn/:course/:lesson">
+            {(p) => (
+              <WithUser>
+                {(user) => (
+                  <LearningPage
+                    user={user}
+                    courseId={p.course}
+                    lessonId={p.lesson}
+                  />
+                )}
+              </WithUser>
+            )}
+          </Route>
+          <Route path="/learn/:course">
+            {(p) => (
+              <WithUser>
+                {(user) => <LearningPage user={user} courseId={p.course} />}
+              </WithUser>
+            )}
+          </Route>
+          <Route path="/studio/image">
+            <WithUser>
+              {(user) => <StudioPage user={user} kind="image" />}
+            </WithUser>
+          </Route>
+          <Route path="/studio/video">
+            <WithUser>
+              {(user) => <StudioPage user={user} kind="video" />}
+            </WithUser>
+          </Route>
+          <Route path="/studio/notes">
+            <WithUser>
+              {(user) => <StudioPage user={user} kind="notes" />}
+            </WithUser>
+          </Route>
+          <Route path="/learn">
+            {() => (
+              <WithUser>{(user) => <LearningPage user={user} />}</WithUser>
+            )}
+          </Route>
+          <Route path="/studio/design">
+            {() => (
+              <WithUser>
+                {(user) => <StudioPage user={user} kind="design" />}
+              </WithUser>
+            )}
+          </Route>
+          <Route path="/studio/3d">
+            {() => (
+              <WithUser>
+                {(user) => <StudioPage user={user} kind="3d" />}
+              </WithUser>
+            )}
+          </Route>
+          <Route path="/projects">
+            {() => <ProjectsPage onToast={notify} />}
+          </Route>
+          <Route path="/portfolio">
+            {() => <PortfolioPage onToast={notify} />}
+          </Route>
+          <Route path="/marketplace">
+            {() => <MarketplacePage onToast={notify} />}
+          </Route>
+          <Route path="/achievements">
+            {() => <AchievementsPage onToast={notify} />}
+          </Route>
+          <Route path="/notifications">
+            {() => <NotificationCenter onToast={notify} />}
+          </Route>
+          <Route path="/admin">
+            {() => (
+              <RoleGate role="admin">
+                <Admin />
+              </RoleGate>
+            )}
+          </Route>
+          <Route>
+            {() => (
+              <div className="grid min-h-[100dvh] place-items-center bg-background p-6 text-center">
+                <div>
+                  <div className="font-mono-ui text-[10px] uppercase tracking-widest text-primary">
+                    {tx("404 / не та страница")}
+                  </div>
+                  <h1 className="mt-4 font-display text-5xl tracking-[-.08em]">
+                    {tx("Продолжим искать.")}
+                  </h1>
+                  <Link
+                    href="/dashboard"
+                    className="mt-6 inline-block rounded-full bg-primary px-5 py-3 text-xs font-semibold text-primary-foreground"
+                  >
+                    {tx("Вернуться в пространство")}
+                  </Link>
+                </div>
+              </div>
+            )}
+          </Route>
+        </Switch>
+      </Suspense>
+    </RoutedErrorBoundary>
+  );
+  return (
+    <>
+      {publicRoute ? (
+        content
+      ) : location === "/onboarding" ? (
+        <AuthGate>{content}</AuthGate>
+      ) : (
+        <AuthGate>
+          <AppShell isDark={isDark} onToggle={toggleTheme} onToast={notify}>
+            {content}
+          </AppShell>
+        </AuthGate>
+      )}
+      {toast && (
+        <div
+          data-testid="status-toast"
+          className="fixed bottom-5 left-1/2 z-50 flex max-w-[calc(100%-32px)] -translate-x-1/2 items-center gap-3 rounded-full border border-border bg-foreground px-4 py-3 text-xs text-background shadow-xl animate-rise"
+        >
+          <CircleCheck size={15} className="shrink-0 text-primary" />
+          {toast}
+        </div>
+      )}
     </>
   );
 }
-export default function App() {
+export default function Root() {
+  const tx = useCopy();
   return (
     <LocaleProvider>
-      <Platform />
+      <App />
     </LocaleProvider>
   );
 }
