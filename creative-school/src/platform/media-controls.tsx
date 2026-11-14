@@ -200,6 +200,7 @@ export function Slider({
         </output>
       </span>
       <input
+        aria-label={label}
         type="range"
         min={min}
         max={max}

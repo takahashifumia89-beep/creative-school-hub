@@ -142,11 +142,16 @@ export default function ImageWorkbench({
       canvas.current.height = 500;
       return;
     }
-    renderImage(canvas.current, source, value, {
-      compare,
-      maxPreview: 1400,
-      ignoreCrop: cropping,
-    });
+    renderImage(
+      canvas.current,
+      source,
+      cropping ? { ...value, exportWidth: undefined } : value,
+      {
+        compare,
+        maxPreview: 1400,
+        ignoreCrop: cropping,
+      },
+    );
   }, [source, value, compare, cropping]);
   async function load(file?: File) {
     if (!file) return;

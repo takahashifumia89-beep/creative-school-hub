@@ -1,6 +1,11 @@
-import {lessonMaterials} from './lesson-materials';
+import { lessonMaterials } from "./lesson-materials";
 export type Text3 = readonly [string, string, string];
-export type Question = { q: Text3; options: Text3[]; answer: number; explanation?: Text3 };
+export type Question = {
+  q: Text3;
+  options: Text3[];
+  answer: number;
+  explanation?: Text3;
+};
 export type Lesson = {
   id: string;
   title: Text3;
@@ -2132,10 +2137,15 @@ export const curriculum: Course[] = [
     ],
   },
 ];
-for(const course of curriculum)for(const lesson of course.lessons){
- const material=lessonMaterials[lesson.id];
- if(material){lesson.questions=material.questions;lesson.task=material.practice.brief;lesson.minutes=material.minutes;}
-}
+for (const course of curriculum)
+  for (const lesson of course.lessons) {
+    const material = lessonMaterials[lesson.id];
+    if (material) {
+      lesson.questions = material.questions;
+      lesson.task = material.practice.brief;
+      lesson.minutes = material.minutes;
+    }
+  }
 export const lessonMap = new Map(
   curriculum.flatMap((c) =>
     c.lessons.map((l) => [l.id, { ...l, courseId: c.id }] as const),

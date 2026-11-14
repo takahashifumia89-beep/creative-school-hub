@@ -49,6 +49,7 @@ export default function VideoWorkbench({
     [progress, setProgress] = useState(0),
     [error, setError] = useState(""),
     [timelineZoom, setTimelineZoom] = useState(45),
+    [timelineAreaWidth, setTimelineAreaWidth] = useState(640),
     [muted, setMuted] = useState(false);
   const doc = useRef(value);
   doc.current = value;
@@ -62,6 +63,7 @@ export default function VideoWorkbench({
     ],
     assets = useAssets(scope, ids),
     preview = useRef<HTMLCanvasElement>(null),
+    timelineArea = useRef<HTMLDivElement>(null),
     elements = useRef(
       new Map<string, { url: string; video: HTMLVideoElement }>(),
     ),
@@ -71,7 +73,7 @@ export default function VideoWorkbench({
     mounted = useRef(true);
   const cur = value.clips.find((c) => c.id === selected) ?? null,
     total = timelineDuration(value.clips),
-    timelineWidth = Math.max(640, total * timelineZoom),
+    timelineWidth = Math.max(timelineAreaWidth, total * timelineZoom),
     location = locateClip(value.clips, playhead),
     disabled = busy || importing;
   function stop() {
@@ -212,13 +214,21 @@ export default function VideoWorkbench({
     setHead(at);
     setPlaying(true);
     try {
+      // Prepare decoder positions before starting the soundtrack, so buffering
+      // cannot put music ahead of the composed picture.
+      for (const clip of snapshot.clips) {
+        const ready = getVideo(clip)!;
+        await mediaReady(ready, controller.signal);
+        await seekMedia(ready, clip.start, controller.signal);
+      }
       const audio = getMusic();
+      let startSoundtrack = false;
       if (audio && snapshot.soundtrack) {
         await mediaReady(audio, controller.signal);
         if (Number.isFinite(audio.duration) && at < audio.duration) {
           await seekMedia(audio, at, controller.signal);
           audio.volume = muted ? 0 : snapshot.soundtrack.volume;
-          await audio.play();
+          startSoundtrack = true;
         }
       }
       while (at < total - 0.005 && !controller.signal.aborted) {
@@ -234,7 +244,11 @@ export default function VideoWorkbench({
         video.volume = muted
           ? 0
           : loc.clip.volume * clipOpacity(loc.clip, loc.local);
-        await video.play();
+        await Promise.all([
+          video.play(),
+          startSoundtrack && audio ? audio.play() : Promise.resolve(),
+        ]);
+        startSoundtrack = false;
         let stalledAt = performance.now(),
           last = video.currentTime;
         await new Promise<void>((ok, no) => {
@@ -309,6 +323,16 @@ export default function VideoWorkbench({
       if (playback.current === controller) stop();
     }
   }
+  useEffect(() => {
+    const element = timelineArea.current;
+    if (!element) return;
+    const measure = () => setTimelineAreaWidth(element.clientWidth);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
   const h = {
     ...history,
     undo: () => {
@@ -664,11 +688,15 @@ export default function VideoWorkbench({
         snapshot.bg,
       );
       recorder.start(1000);
-      if (soundtrack) await soundtrack.play();
+      let startSoundtrack = !!soundtrack;
       for (const { clip, video, gain, source } of tracks) {
         if (controller.signal.aborted)
           throw new DOMException("Aborted", "AbortError");
-        await video.play();
+        await Promise.all([
+          video.play(),
+          startSoundtrack && soundtrack ? soundtrack.play() : Promise.resolve(),
+        ]);
+        startSoundtrack = false;
         let last = video.currentTime,
           stalledAt = performance.now();
         await new Promise<void>((ok, no) => {
@@ -841,7 +869,7 @@ export default function VideoWorkbench({
     {
       length: Math.min(
         101,
-        Math.ceil(total / (total > 120 ? 10 : total > 30 ? 5 : 1)) + 1,
+        Math.floor(total / (total > 120 ? 10 : total > 30 ? 5 : 1)) + 1,
       ),
     },
     (_, i) => i * (total > 120 ? 10 : total > 30 ? 5 : 1),
@@ -1009,7 +1037,7 @@ export default function VideoWorkbench({
                 onChange={(e) => seek(+e.target.value)}
               />
             </label>
-            <div className="media-timeline-scroll">
+            <div className="media-timeline-scroll" ref={timelineArea}>
               <div
                 className="media-timeline"
                 style={{ width: timelineWidth }}

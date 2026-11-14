@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { api, download, message, type Project, type User } from "./client";
 import { L, useLocale } from "./locale";
 import { designSchema, sceneSchema } from "./schema";
+import { localBounds } from "../features/studio/design-geometry";
 export function Preview({ project: p }: { project: Project }) {
   if (p.kind === "design" && p.content) {
     try {
@@ -17,51 +18,77 @@ export function Preview({ project: p }: { project: Project }) {
           <rect width="100%" height="100%" fill={d.bg} />
           {d.shapes
             .filter((s) => !s.hidden)
-            .map((s) => (
-              <g
-                key={s.id}
-                opacity={s.op ?? 1}
-                stroke={s.stroke ?? "none"}
-                strokeWidth={s.strokeWidth ?? 0}
-                transform={`rotate(${s.rot ?? 0} ${s.x + s.w / 2} ${s.y + s.h / 2})`}
-              >
-                {s.type === "rect" ? (
-                  <rect
-                    x={s.x}
-                    y={s.y}
-                    width={s.w}
-                    height={s.h}
-                    fill={s.fill}
-                    rx={s.r}
-                  />
-                ) : s.type === "ellipse" ? (
-                  <ellipse
-                    cx={s.x + s.w / 2}
-                    cy={s.y + s.h / 2}
-                    rx={s.w / 2}
-                    ry={s.h / 2}
-                    fill={s.fill}
-                  />
-                ) : s.type === "text" ? (
-                  <text
-                    x={s.x}
-                    y={s.y}
-                    dominantBaseline="hanging"
-                    fontSize={s.size}
-                    fill={s.fill}
-                    fontFamily={s.font}
-                    fontWeight={s.bold ? 700 : 400}
-                  >
-                    {s.text}
-                  </text>
-                ) : (
-                  <polygon
-                    points={`${s.x + s.w / 2},${s.y} ${s.x + s.w},${s.y + s.h} ${s.x},${s.y + s.h}`}
-                    fill={s.fill}
-                  />
-                )}
-              </g>
-            ))}
+            .map((s) => {
+              const b = localBounds(s);
+              const textX =
+                s.align === "center"
+                  ? s.x + b.w / 2
+                  : s.align === "right"
+                    ? s.x + b.w
+                    : s.x;
+              return (
+                <g
+                  key={s.id}
+                  opacity={s.op ?? 1}
+                  stroke={s.stroke ?? "none"}
+                  strokeWidth={s.strokeWidth ?? 0}
+                  transform={`rotate(${s.rot ?? 0} ${b.x + b.w / 2} ${b.y + b.h / 2})`}
+                >
+                  {s.type === "rect" ? (
+                    <rect
+                      x={s.x}
+                      y={s.y}
+                      width={s.w}
+                      height={s.h}
+                      fill={s.fill}
+                      rx={s.r}
+                    />
+                  ) : s.type === "ellipse" ? (
+                    <ellipse
+                      cx={s.x + s.w / 2}
+                      cy={s.y + s.h / 2}
+                      rx={s.w / 2}
+                      ry={s.h / 2}
+                      fill={s.fill}
+                    />
+                  ) : s.type === "text" ? (
+                    <text
+                      x={textX}
+                      y={s.y}
+                      dominantBaseline="text-before-edge"
+                      fontSize={s.size ?? 36}
+                      fill={s.fill}
+                      fontFamily={s.font ?? "Inter, sans-serif"}
+                      fontWeight={s.bold ? 700 : 400}
+                      fontStyle={s.italic ? "italic" : "normal"}
+                      textAnchor={
+                        s.align === "center"
+                          ? "middle"
+                          : s.align === "right"
+                            ? "end"
+                            : "start"
+                      }
+                      letterSpacing={s.letterSpacing ?? 0}
+                    >
+                      {(s.text ?? "").split("\n").map((line, i) => (
+                        <tspan
+                          key={i}
+                          x={textX}
+                          y={s.y + i * (s.size ?? 36) * (s.lineHeight ?? 1.2)}
+                        >
+                          {line || "\u00a0"}
+                        </tspan>
+                      ))}
+                    </text>
+                  ) : (
+                    <polygon
+                      points={`${s.x + s.w / 2},${s.y} ${s.x + s.w},${s.y + s.h} ${s.x},${s.y + s.h}`}
+                      fill={s.fill}
+                    />
+                  )}
+                </g>
+              );
+            })}
         </svg>
       );
     } catch {

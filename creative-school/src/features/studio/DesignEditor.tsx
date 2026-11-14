@@ -161,7 +161,7 @@ export function DesignEditor({
   value: DesignDoc;
   onChange: (doc: DesignDoc) => void;
 }) {
-  const { t } = useLocale(),
+  const { t, lang } = useLocale(),
     uid = useId(),
     W = value.w ?? 800,
     H = value.h ?? 500;
@@ -202,6 +202,10 @@ export function DesignEditor({
     [exporting, setExporting] = useState(false),
     [alignTo, setAlignTo] = useState<"canvas" | "selection">("canvas"),
     [inline, setInline] = useState<{ id: string; text: string } | null>(null);
+  useEffect(() => {
+    setNotice("");
+    setError("");
+  }, [lang]);
   const selected = value.shapes.filter((s) => ids.includes(s.id)),
     editable = selected.filter((s) => !s.locked),
     visibleSelection = selected.filter((s) => !s.hidden),
