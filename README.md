@@ -3,7 +3,7 @@
 A trilingual creative learning workspace with React, TypeScript, Vite, Cloudflare Workers and D1/SQLite. The application lives in [`creative-school/`](creative-school/).
 
 - 8 learning paths / 32 substantive lessons with worked examples, practice, self-review, 96 questions with explanations and 30 linked sources in Russian, English and Kazakh. Account-scoped notes, reading downloads and offline quiz queues are included. Existing extended Russian reading is preserved as an optional appendix.
-- Design workbench: zoom/pan, multi-selection, snapping, precise transforms, layers, multiline typography, templates, transactional undo/redo and PNG/SVG/JSON exports.
+- Design workbench: 13 editable shape/text types including diamonds, adjustable stars, arrows and polygons; zoom/pan, multi-selection, snapping, precise transforms, layers, multiline typography, templates, transactional undo/redo and PNG/SVG/JSON exports.
 - 3D workbench: hierarchy, precise transforms, PBR materials, camera views, editable mesh vertices, safe OBJ import and OBJ/GLB/PNG/JSON exports.
 - Photo workbench: draggable precise crop, comparison view, filters, undo/redo and sized PNG/JPEG/WebP exports.
 - Video workbench: composed preview, playhead, split/trim/reorder, undo/redo, titles, fades, volume, soundtrack and real-time WebM export with audio.

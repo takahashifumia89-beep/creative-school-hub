@@ -28,7 +28,7 @@ export class AssistantError extends Error {
 }
 const capabilities = {
   design:
-    "2D layout: rectangles, ellipses, triangles, multiline text; layers/locks/visibility; multi-selection, alignment/distribution, precise transforms, zoom/pan, snap/grid, templates, undo/redo, SVG/PNG/JSON. No raster placement, paths or Boolean operations.",
+    "2D layout: rectangles, ellipses, triangles, diamonds, editable stars, pentagons, hexagons, octagons, arrows, crosses, parallelograms, trapezoids, multiline text; layers/locks/visibility; multi-selection, alignment/distribution, precise transforms, zoom/pan, snap/grid, templates, undo/redo, SVG/PNG/JSON. No raster placement, paths or Boolean operations.",
   "3d": "3D: primitive objects, hierarchy/locks, numeric position/rotation/dimensions, materials, camera views, snapping, convert primitive to mesh, individual vertex editing, local geometry-only OBJ import, OBJ/GLB/PNG/JSON export. No sculpting, UV editing, rigging or animation timeline.",
   image:
     "Photo: local PNG/JPEG/WebP source, draggable/numeric crop, rotation/flip, brightness/contrast/saturation/grayscale/sepia/blur, comparison, undo/redo, sized PNG/JPEG/WebP export (4096px maximum). No masks, RAW or advanced retouching.",

@@ -197,3 +197,67 @@ test("failed or stopped AI requests retain the question without an automatic ret
   ).toBeEnabled();
   expect(calls).toBe(2);
 });
+
+test("assistant stays outside the editor and new figures persist with editable star points", async ({
+  page,
+  request,
+}) => {
+  const headers = await login(page, request);
+  await page.route("**/api/assistant", (route) =>
+    route.fulfill({ json: { available: true } }),
+  );
+  await page.goto("/studio/design");
+  await page.getByRole("button", { name: "ИИ-помощник", exact: true }).click();
+  const helper = page.locator("#studio-assistant-panel");
+  const editor = page.locator(".studio-editor-frame");
+  const a = await helper.boundingBox(),
+    b = await editor.boundingBox();
+  expect(a!.y + a!.height).toBeLessThanOrEqual(b!.y);
+  await helper.getByRole("button", { name: "Закрыть помощника" }).click();
+  await page.locator(".dw-shape-library summary").click();
+  await page.getByRole("button", { name: "Звезда", exact: true }).click();
+  await page.getByLabel("Число лучей", { exact: true }).fill("7");
+  await page.getByLabel("Число лучей", { exact: true }).press("Tab");
+  await page.getByRole("button", { name: "Ромб", exact: true }).click();
+  await page.getByRole("button", { name: "Стрелка", exact: true }).click();
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(page).toHaveURL(/project=/);
+  await expect(page.locator(".studio-save-status")).toContainText("Сохранено");
+  const id = new URL(page.url()).searchParams.get("project");
+  const p = await (
+    await request.get(`/api/projects/${id}`, { headers })
+  ).json();
+  const shapes = JSON.parse(p.content).shapes;
+  expect(shapes.map((s: any) => s.type)).toEqual(["star", "diamond", "arrow"]);
+  expect(shapes[0].starPoints).toBe(7);
+  await page.reload();
+
+  await expect(page.locator(".dw-viewport polygon")).toHaveCount(3);
+});
+test("settings show one security action at a time", async ({
+  page,
+  request,
+}) => {
+  await login(page, request);
+  await page.goto("/settings");
+  await expect(
+    page.getByRole("heading", { name: "Настройки", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Удалить аккаунт", exact: true }),
+  ).toBeHidden();
+  await page.getByText("Безопасность и данные", { exact: true }).click();
+  await page
+    .getByLabel("Что нужно сделать?", { exact: true })
+    .selectOption("export");
+  await expect(
+    page.getByRole("button", { name: "Экспорт данных", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Экспорт данных", exact: true }),
+  ).toBeDisabled();
+  await expect(page.getByLabel("Новый пароль — от 12 символов")).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Удалить аккаунт", exact: true }),
+  ).toHaveCount(0);
+});

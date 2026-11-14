@@ -58,3 +58,46 @@ test("multiline text uses intrinsic bounds while legacy zero width/height remain
   assert(two.w >= one.w);
   assert.equal(boundsOf([]), null);
 });
+
+import { polygonPoints } from "../src/features/studio/design-geometry";
+import { validDocument } from "../src/platform/schema";
+test("new polygon shapes fit their editable bounds and survive document validation", () => {
+  for (const type of [
+    "diamond",
+    "star",
+    "pentagon",
+    "hexagon",
+    "octagon",
+    "arrow",
+    "cross",
+    "parallelogram",
+    "trapezoid",
+  ] as const) {
+    const shape = {
+      id: "shape",
+      type,
+      x: 12,
+      y: 20,
+      w: 160,
+      h: 90,
+      fill: "#123456",
+      starPoints: 7,
+      innerRatio: 0.4,
+    };
+    assert(
+      validDocument(
+        "design",
+        JSON.stringify({ bg: "#ffffff", shapes: [shape] }),
+      ),
+    );
+    const points = polygonPoints(shape)
+      .split(" ")
+      .map((p) => p.split(",").map(Number));
+    assert(points.every((p) => p.every(Number.isFinite)));
+    assert(Math.abs(Math.min(...points.map((p) => p[0])) - 12) < 0.001);
+    assert(Math.abs(Math.max(...points.map((p) => p[0])) - 172) < 0.001);
+    assert(Math.abs(Math.min(...points.map((p) => p[1])) - 20) < 0.001);
+    assert(Math.abs(Math.max(...points.map((p) => p[1])) - 110) < 0.001);
+    if (type === "star") assert.equal(points.length, 14);
+  }
+});
