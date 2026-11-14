@@ -70,7 +70,7 @@ export class ApiError extends Error {
   constructor(
     public code: string,
     public status: number,
-    public details:unknown = undefined,
+    public details: unknown = undefined,
   ) {
     super(code);
   }
@@ -96,7 +96,7 @@ export async function api<T = Record<string, unknown>>(
   if (!res.ok) {
     if (payload.error === "UNAUTHORIZED" && path !== "/me")
       window.dispatchEvent(new Event("cs-session-expired"));
-    throw new ApiError(payload.error ?? "SERVER_ERROR", res.status,payload);
+    throw new ApiError(payload.error ?? "SERVER_ERROR", res.status, payload);
   }
   return payload;
 }

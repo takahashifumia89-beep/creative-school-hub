@@ -1,3 +1,4 @@
+import { lessonMaterials } from "../src/platform/lesson-materials";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { validDocument } from "../src/platform/schema";
@@ -95,10 +96,28 @@ test("curriculum IDs are unique, translations complete and answer keys valid", (
     assert.equal(c.title.length, 3);
     for (const l of c.lessons) {
       assert(l.body.every((x) => x.length > 60));
-      assert(l.task.every((x) => x.length > 60));
-      assert(l.questions.length >= 2);
+      assert(l.task.every((x) => x.trim().length > 0));
+      assert(l.questions.length >= 3);
+      const material = lessonMaterials[l.id];
+      assert(material, `Missing material ${l.id}`);
+      assert(material.sections.length >= 2);
+      assert(material.workedExample.steps.length >= 2);
+      assert(material.practice.steps.length >= 2);
+      assert(material.checklist.length >= 2);
+      assert(material.sources.length >= 1);
+      for (const source of material.sources) {
+        assert(source.url.startsWith("https://"));
+        assert(source.publisher.length > 2);
+      }
+      for (const section of material.sections) {
+        assert(section.title.every(Boolean));
+        assert(
+          section.paragraphs.every((p) => p.every((text) => text.length > 60)),
+        );
+      }
       for (const q of l.questions) {
         assert(q.q.every(Boolean));
+        assert(q.explanation?.every((text) => text.length > 20));
         assert(q.options.every((o) => o.length === 3 && o.every(Boolean)));
         assert(q.answer >= 0 && q.answer < q.options.length);
       }

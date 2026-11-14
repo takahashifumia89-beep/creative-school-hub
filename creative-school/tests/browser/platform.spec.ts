@@ -1,9 +1,15 @@
+import { lessonMap } from "../../src/platform/curriculum";
 import { test, expect, type APIRequestContext } from "@playwright/test";
+const answersFor = (id: string) =>
+  lessonMap.get(id)!.questions.map((q) => q.answer);
 const password = "Long-test-password-2026!";
 async function account(request: APIRequestContext) {
   const email = `test-${crypto.randomUUID()}@example.test`;
   const r = await request.post("/api/auth/signup", {
     data: { email, password, displayName: "Creative Test" },
+    headers: {
+      "CF-Connecting-IP": `2001:db8::${Math.floor(Math.random() * 65535).toString(16)}`,
+    },
   });
   expect(r.status()).toBe(201);
   const body = await r.json();
@@ -101,7 +107,7 @@ test("server validates quizzes, duplicate completion awards XP exactly once", as
     [1, 2, 3].map(() =>
       request.post("/api/progress", {
         headers: a.headers,
-        data: { lessonId: "vis-1", answers: [0, 1] },
+        data: { lessonId: "vis-1", answers: answersFor("vis-1") },
       }),
     ),
   );
@@ -206,7 +212,7 @@ test("editor autosaves and local backup restores after reload", async ({
     .getByRole("button", { name: "Прямоугольник", exact: true })
     .click();
   await expect(page).toHaveURL(/project=/);
-  await expect(page.getByRole("status")).toContainText("Сохранено");
+  await expect(page.locator(".studio-save-status")).toContainText("Сохранено");
   await page.reload();
   await expect(page.getByLabel("Название", { exact: true })).toHaveValue(
     "Autosave integration",
@@ -248,12 +254,22 @@ test("image corrections export a real PNG and video timeline exports audio/video
       mimeType: "image/png",
       buffer: Buffer.from(png, "base64"),
     });
-  await expect(page.locator("canvas")).toHaveAttribute("width", "80");
+  await expect(
+    page.getByLabel("Предпросмотр изображения", { exact: true }),
+  ).toHaveAttribute("width", "80");
   await page.getByLabel("Кадрирование по центру").selectOption("square");
-  await expect(page.locator("canvas")).toHaveAttribute("width", "40");
+  await expect(
+    page.getByLabel("Предпросмотр изображения", { exact: true }),
+  ).toHaveAttribute("width", "40");
   const imageDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "PNG ↓", exact: true }).click();
-  expect((await imageDownload).suggestedFilename()).toBe("edited.png");
+  expect((await imageDownload).suggestedFilename()).toBe("source-edited.png");
+  await page.getByLabel("Название", { exact: true }).fill("Cached photo");
+  await expect(page.locator(".studio-save-status")).toContainText("Сохранено");
+  await page.reload();
+  await expect(
+    page.getByLabel("Предпросмотр изображения", { exact: true }),
+  ).toHaveAttribute("width", "40");
   page.on("dialog", (d) => d.accept());
   await page.goto("/studio/video");
   const { videoFixture } = await import("../fixture");
@@ -263,6 +279,21 @@ test("image corrections export a real PNG and video timeline exports audio/video
     buffer: videoFixture,
   });
   await expect(page.getByLabel("Конец, с")).toBeVisible();
+  const position = page.getByLabel("Позиция на шкале, с", { exact: true });
+  await position.evaluate((input) => {
+    Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!.call(input, "0.6");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await page.getByRole("button", { name: "Разрезать", exact: true }).click();
+  await expect(page.locator(".media-timeline-clip")).toHaveCount(2);
+  await page.getByRole("button", { name: "Отменить", exact: true }).click();
+  await expect(page.locator(".media-timeline-clip")).toHaveCount(1);
+  await page.getByRole("button", { name: "Вернуть", exact: true }).click();
+  await expect(page.locator(".media-timeline-clip")).toHaveCount(2);
   await page.getByLabel("Титр", { exact: true }).fill("Export test");
   const videoDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "WebM ↓", exact: true }).click();
@@ -314,17 +345,46 @@ test("offline quiz queue syncs and stays isolated between accounts", async ({
     },
   ]);
   await page.goto("/learn/visual-basics/vis-1");
-  await page.getByLabel("Практика выполнена и проверена мной.").check();
+  await expect(page.locator(".lesson-reading")).toHaveCount(2);
+  await expect(page.locator(".lesson-sources a").first()).toHaveAttribute(
+    "href",
+    /^https:\/\//,
+  );
   await page
-    .getByLabel("Изменить размер и контраст одного ключевого элемента", {
+    .getByLabel("Мои заметки по уроку")
+    .fill("Проверить иерархию на афише");
+  await page.reload();
+  await expect(page.getByLabel("Мои заметки по уроку")).toHaveValue(
+    "Проверить иерархию на афише",
+  );
+  await page.getByLabel("Практика выполнена и проверена мной.").check();
+  const lesson = lessonMap.get("vis-1")!;
+  for (let i = 0; i < lesson.questions.length; i++)
+    await page
+      .locator("fieldset")
+      .nth(i)
+      .getByLabel(lesson.questions[i].options[lesson.questions[i].answer][0], {
+        exact: true,
+      })
+      .check();
+  const first = lesson.questions[0];
+  await page
+    .locator("fieldset")
+    .first()
+    .getByLabel(first.options[(first.answer + 1) % first.options.length][0], {
       exact: true,
     })
     .check();
   await page
-    .getByLabel(
-      "Исходник, экспорт и объяснение выбора между двумя вариантами.",
-      { exact: true },
-    )
+    .getByRole("button", { name: "Проверить ответы · +10 XP", exact: true })
+    .click();
+  await expect(
+    page.locator(".lesson-feedback.is-incorrect").first(),
+  ).toBeVisible();
+  await page
+    .locator("fieldset")
+    .first()
+    .getByLabel(first.options[first.answer][0], { exact: true })
     .check();
   await page.route("**/api/progress", (route) =>
     route.request().method() === "POST" ? route.abort() : route.continue(),
@@ -339,9 +399,7 @@ test("offline quiz queue syncs and stays isolated between accounts", async ({
   await page
     .getByRole("button", { name: "Синхронизировать", exact: true })
     .click();
-  await expect(
-    page.getByRole("button", { name: "Пройдено", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /Пройдено/ })).toBeVisible();
   const b = await account(request);
   await page.context().addCookies([
     {
@@ -352,6 +410,7 @@ test("offline quiz queue syncs and stays isolated between accounts", async ({
     },
   ]);
   await page.reload();
+  await expect(page.getByLabel("Мои заметки по уроку")).toHaveValue("");
   await expect(
     page.getByRole("button", {
       name: "Проверить ответы · +10 XP",
@@ -426,4 +485,95 @@ test("retrying initial save does not create duplicate projects or XP", async ({
   ).json();
   expect(stats.projectsTotal).toBe(1);
   expect(stats.xp).toBe(20);
+});
+
+test("design workbench supports precise history, locked layers and focus mode", async ({
+  page,
+  request,
+}) => {
+  const a = await account(request);
+  await page
+    .context()
+    .addCookies([
+      {
+        name: "cs_session",
+        value: a.headers.Cookie.split("=")[1],
+        domain: "localhost",
+        path: "/",
+      },
+    ]);
+  await page.goto("/studio/design");
+  await page.getByLabel("Название", { exact: true }).fill("Precise design");
+  await page
+    .getByRole("button", { name: "Прямоугольник", exact: true })
+    .click();
+  await page.getByRole("tab", { name: "Свойства", exact: true }).click();
+  const x = page.getByLabel("X", { exact: true });
+  const original = await x.inputValue();
+  await x.fill("80");
+  await x.press("Enter");
+  await expect(x).toHaveValue("80");
+  await page.getByRole("button", { name: "Отменить", exact: true }).click();
+  await expect(x).toHaveValue(original);
+  await page.getByRole("button", { name: "Вернуть", exact: true }).click();
+  await expect(x).toHaveValue("80");
+  await page.getByRole("tab", { name: "Слои", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Блокировка слоя", exact: true })
+    .click();
+  await page.getByRole("tab", { name: "Свойства", exact: true }).click();
+  await expect(x).toBeDisabled();
+  await page.getByRole("button", { name: "Режим фокуса", exact: true }).click();
+  await expect(page.locator("body")).toHaveClass(/cs-studio-focus/);
+  await expect(page.locator("[data-workspace-sidebar]")).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("[data-workspace-sidebar]")).toBeVisible();
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(page.locator(".studio-save-status")).toContainText("Сохранено");
+  await page.reload();
+  await expect(
+    page.locator('svg rect[fill="#e8590c"]').first(),
+  ).toHaveAttribute("x", "80");
+});
+test("model workbench converts geometry and persists numeric vertex edits", async ({
+  page,
+  request,
+}) => {
+  const a = await account(request);
+  await page
+    .context()
+    .addCookies([
+      {
+        name: "cs_session",
+        value: a.headers.Cookie.split("=")[1],
+        domain: "localhost",
+        path: "/",
+      },
+    ]);
+  await page.goto("/studio/3d");
+  await page.getByLabel("Название", { exact: true }).fill("Editable mesh");
+  await page.getByRole("button", { name: "+ Куб", exact: true }).click();
+  await page.getByLabel("Положение X", { exact: true }).fill("2");
+  await page.getByLabel("Положение X", { exact: true }).press("Tab");
+  await page
+    .getByRole("button", { name: "Преобразовать в сетку", exact: true })
+    .click();
+  const vertex = page.getByLabel("Вершина X", { exact: true });
+  await expect(vertex).toBeVisible();
+  await vertex.fill("-0.4");
+  await vertex.press("Tab");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(page.locator(".studio-save-status")).toContainText("Сохранено");
+  await expect(page).toHaveURL(/project=/);
+  const id = new URL(page.url()).searchParams.get("project");
+  const p = await (
+    await request.get(`/api/projects/${id}`, { headers: a.headers })
+  ).json();
+  const doc = JSON.parse(p.content);
+  expect(doc.objects[0].kind).toBe("mesh");
+  expect(doc.objects[0].pos[0]).toBe(2);
+  expect(doc.objects[0].vertices[0]).toBeCloseTo(-0.4);
+  const file = page.waitForEvent("download");
+  await page.getByRole("button", { name: "OBJ ↓", exact: true }).click();
+  expect((await file).suggestedFilename()).toMatch(/\.obj$/);
 });

@@ -1,3 +1,9 @@
+import { LessonReader as LessonContent } from "./LessonReader";
+import {
+  feedbackSchema,
+  type QuestionFeedback,
+  type SubmissionResult,
+} from "./assessment";
 import { coursework } from "./coursework";
 import { download } from "./client";
 import { PageIntro } from "@/features/shared/PageIntro";
@@ -87,14 +93,19 @@ export default function Learning({
     window.addEventListener("online", online);
     return () => window.removeEventListener("online", online);
   }, [user.id]);
-  async function finish(l: Lesson, answers: number[]) {
+  async function finish(
+    l: Lesson,
+    answers: number[],
+  ): Promise<SubmissionResult> {
     try {
-      const r = await api<{ done: string[] }>("/progress", "POST", {
-        lessonId: l.id,
-        answers,
-      });
+      const r = await api<{ done: string[]; feedback: QuestionFeedback[] }>(
+        "/progress",
+        "POST",
+        { lessonId: l.id, answers },
+      );
       setDone(r.done);
       store(read().filter((x) => x.lessonId !== l.id));
+      window.dispatchEvent(new Event("creative-school-stats-change"));
       setStatus(
         t(
           L(
@@ -104,6 +115,7 @@ export default function Learning({
           ),
         ),
       );
+      return { kind: "passed", feedback: r.feedback };
     } catch (e) {
       if (e instanceof ApiError && (e.status === 0 || e.status >= 500)) {
         store([
@@ -119,7 +131,17 @@ export default function Learning({
             ),
           ),
         );
-      } else setStatus(t(message(e)));
+        return { kind: "queued" };
+      }
+      const result =
+        e instanceof ApiError ? feedbackSchema.safeParse(e.details) : null;
+      const error = t(message(e));
+      setStatus(error);
+      return {
+        kind: "failed",
+        error,
+        feedback: result?.success ? result.data.feedback : undefined,
+      };
     }
   }
   const project = course
@@ -188,9 +210,15 @@ export default function Learning({
           {lesson ? (
             <LessonContent
               key={lesson.id}
+              userId={user.id}
               lesson={lesson}
               done={done.includes(lesson.id)}
               pending={pending.some((p) => p.lessonId === lesson.id)}
+              nextHref={
+                course.lessons[course.lessons.indexOf(lesson) + 1]
+                  ? `/learn/${course.id}/${course.lessons[course.lessons.indexOf(lesson) + 1].id}`
+                  : undefined
+              }
               onFinish={(answers) => finish(lesson, answers)}
             />
           ) : (
@@ -204,7 +232,7 @@ export default function Learning({
               )}
             </p>
           )}
-          {project && (
+          {!lesson && project && (
             <details className="mt-5 rounded-xl border border-border bg-card p-4 text-sm">
               <summary className="cursor-pointer font-semibold">
                 {t(
@@ -248,27 +276,29 @@ export default function Learning({
               </button>
             </details>
           )}
-          <ol className="mt-6 grid gap-2">
-            {course.lessons.map((l, i) => (
-              <li key={l.id}>
-                <Link
-                  href={`/learn/${course.id}/${l.id}`}
-                  aria-current={lessonId === l.id ? "page" : undefined}
-                  className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 text-sm hover:border-primary"
-                >
-                  <span
-                    className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-semibold ${done.includes(l.id) ? "bg-primary text-primary-foreground" : "bg-muted"}`}
+          {!lesson && (
+            <ol className="mt-6 grid gap-2">
+              {course.lessons.map((l, i) => (
+                <li key={l.id}>
+                  <Link
+                    href={`/learn/${course.id}/${l.id}`}
+                    aria-current={lessonId === l.id ? "page" : undefined}
+                    className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 text-sm hover:border-primary"
                   >
-                    {done.includes(l.id) ? "✓" : i + 1}
-                  </span>
-                  <span className="flex-1">{t(l.title)}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {l.minutes} min
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ol>
+                    <span
+                      className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-semibold ${done.includes(l.id) ? "bg-primary text-primary-foreground" : "bg-muted"}`}
+                    >
+                      {done.includes(l.id) ? "✓" : i + 1}
+                    </span>
+                    <span className="flex-1">{t(l.title)}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {l.minutes} min
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ol>
+          )}
         </>
       ) : (
         <>
@@ -360,143 +390,5 @@ export default function Learning({
         </>
       )}
     </div>
-  );
-}
-
-function LessonContent({
-  lesson,
-  done,
-  pending,
-  onFinish,
-}: {
-  lesson: Lesson;
-  done: boolean;
-  pending: boolean;
-  onFinish: (answers: number[]) => Promise<void>;
-}) {
-  const { t, lang } = useLocale(),
-    [picks, setPicks] = useState<number[]>(lesson.questions.map(() => -1)),
-    [review, setReview] = useState(false),
-    [busy, setBusy] = useState(false);
-  // Shuffle displayed alternatives without changing stable server answer indexes.
-  const [orders] = useState(() =>
-    lesson.questions.map((q) =>
-      q.options.map((_, i) => i).sort(() => Math.random() - 0.5),
-    ),
-  );
-  return (
-    <article className="my-6 max-w-[820px] space-y-5 rounded-2xl border border-border bg-card p-5 text-sm leading-relaxed sm:p-8">
-      <h3 className="font-display text-3xl tracking-[-.05em]">
-        {t(lesson.title)}
-      </h3>
-      <p>{t(lesson.body)}</p>
-      {lang === "ru" && readingRu[lesson.id] && (
-        <details>
-          <summary>Дополнительный материал из исходного курса</summary>
-          {readingRu[lesson.id].body.map((text, i) => (
-            <p key={i}>{text}</p>
-          ))}
-          <p>{readingRu[lesson.id].tip}</p>
-          <p>{readingRu[lesson.id].task}</p>
-        </details>
-      )}
-      <h4 className="font-display text-xl">
-        {t(L("Разбор и практика", "Worked practice", "Талдау және тәжірибе"))}
-      </h4>
-      <p>{t(lesson.task)}</p>
-      <ol>
-        <li>
-          {t(
-            L(
-              "Зафиксируйте цель и ограничение проекта.",
-              "Write the project goal and constraint.",
-              "Жоба мақсаты мен шектеуін жазыңыз.",
-            ),
-          )}
-        </li>
-        <li>
-          {t(
-            L(
-              "Сделайте вариант A, затем измените один параметр для варианта B.",
-              "Create version A, then change one parameter for version B.",
-              "A нұсқасын жасап, B нұсқасы үшін бір параметрді өзгертіңіз.",
-            ),
-          )}
-        </li>
-        <li>
-          {t(
-            L(
-              "Сравните читаемость, целостность и соответствие задаче. Сохраните оба результата.",
-              "Compare clarity, consistency and fit to the goal. Save both results.",
-              "Айқындық, тұтастық және мақсатқа сәйкестікті салыстырыңыз. Екі нәтижені сақтаңыз.",
-            ),
-          )}
-        </li>
-      </ol>
-      <label className="flex items-center gap-3">
-        <input
-          type="checkbox"
-          checked={review}
-          onChange={(e) => setReview(e.target.checked)}
-        />
-        {t(
-          L(
-            "Практика выполнена и проверена мной.",
-            "I completed and reviewed the practice.",
-            "Тәжірибені орындап, өзім тексердім.",
-          ),
-        )}
-      </label>
-      <h4 className="font-display text-xl">
-        {t(L("Проверка знаний", "Knowledge check", "Білімді тексеру"))}
-      </h4>
-      {lesson.questions.map((q, qi) => (
-        <fieldset key={qi} className="rounded-xl border border-border p-4">
-          <legend>
-            {qi + 1}. {t(q.q)}
-          </legend>
-          {orders[qi].map((i) => (
-            <label
-              className="mt-3 flex items-start gap-3 rounded-xl border border-border px-4 py-3 text-sm hover:border-primary"
-              key={i}
-            >
-              <input
-                type="radio"
-                name={`${lesson.id}-${qi}`}
-                checked={picks[qi] === i}
-                onChange={() =>
-                  setPicks((p) => p.map((v, k) => (k === qi ? i : v)))
-                }
-              />
-              {t(q.options[i])}
-            </label>
-          ))}
-        </fieldset>
-      ))}
-      <button
-        className="mt-4 rounded-full bg-primary px-5 py-2.5 text-xs font-semibold text-primary-foreground disabled:opacity-40"
-        disabled={done || pending || busy || !review || picks.includes(-1)}
-        onClick={async () => {
-          setBusy(true);
-          try {
-            await onFinish(picks);
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        {done
-          ? t(L("Пройдено", "Completed", "Аяқталды"))
-          : pending
-            ? t(L("В очереди", "Queued", "Кезекте"))
-            : t(
-                L(
-                  "Проверить ответы · +10 XP",
-                  "Submit answers · +10 XP",
-                  "Жауапты тексеру · +10 XP",
-                ),
-              )}
-      </button>
-    </article>
   );
 }

@@ -1,3 +1,4 @@
+import { clearAccountMediaCache } from "./media-cache";
 import { useEffect, useState, type FormEvent } from "react";
 import { useLocation } from "wouter";
 import { api, download, message, type User } from "./client";
@@ -56,11 +57,17 @@ export function Settings({
           for (const key of Object.keys(localStorage))
             if (
               key.startsWith(`cs-draft:${user.id}:`) ||
+              key.startsWith(`cs-lesson-note:${user.id}:`) ||
               key === `cs-progress-queue:${user.id}`
             )
               localStorage.removeItem(key);
         } catch {
           /* restricted storage */
+        }
+        try {
+          await clearAccountMediaCache(user.id);
+        } catch {
+          /* device storage may be unavailable */
         }
       }
       if (["delete", "logout-all"].includes(path)) onUser(null);

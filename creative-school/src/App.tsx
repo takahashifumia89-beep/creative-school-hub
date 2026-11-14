@@ -188,7 +188,8 @@ function AppShell({
   }, []);
   return (
     <div className="grain min-h-[100dvh] bg-background text-foreground">
-      <aside data-workspace-sidebar
+      <aside
+        data-workspace-sidebar
         className={`fixed inset-y-0 left-0 z-40 flex w-[244px] flex-col border-r border-sidebar-border bg-sidebar px-4 py-5 transition-transform duration-300 lg:translate-x-0 ${open ? "translate-x-0" : "-translate-x-full"}`}
       >
         <div className="flex items-center justify-between px-2">
@@ -314,7 +315,10 @@ function AppShell({
         />
       )}
       <main data-workspace-main className="min-h-[100dvh] lg:pl-[244px]">
-        <header data-workspace-header className="sticky top-0 z-20 flex h-[68px] items-center justify-between border-b border-border/70 bg-background/85 px-5 backdrop-blur-md sm:px-8">
+        <header
+          data-workspace-header
+          className="sticky top-0 z-20 flex h-[68px] items-center justify-between border-b border-border/70 bg-background/85 px-5 backdrop-blur-md sm:px-8"
+        >
           <button
             data-testid="button-open-sidebar"
             onClick={() => setOpen(true)}
@@ -515,7 +519,9 @@ function App() {
           <Route path="/studio/design">
             {() => (
               <WithUser>
-                {(user) => <StudioPage key="design" user={user} kind="design" />}
+                {(user) => (
+                  <StudioPage key="design" user={user} kind="design" />
+                )}
               </WithUser>
             )}
           </Route>
