@@ -1,3 +1,5 @@
+import {sceneSchema} from './model-schema';
+export {sceneSchema} from './model-schema';
 import { z } from "zod";
 const color = z.string().regex(/^#[0-9a-f]{6}$/i);
 const num = z.number().finite().min(-10000).max(10000);
@@ -33,34 +35,12 @@ export const designSchema = z.object({
           ])
           .optional(),
         bold: z.boolean().optional(),
+        name:z.string().max(80).optional(),italic:z.boolean().optional(),align:z.enum(["left","center","right"]).optional(),lineHeight:z.number().min(.8).max(3).optional(),letterSpacing:z.number().min(-20).max(100).optional(),
       }),
     )
     .max(500),
 });
-export const sceneSchema = z.object({
-  bg: color,
-  light: z.number().min(0).max(10).optional(),
-  ground: z.boolean().optional(),
-  wireframe: z.boolean().optional(),
-  objects: z
-    .array(
-      z.object({
-        id: z.string().max(80),
-        kind: z.enum(["box", "sphere", "cone", "torus", "cylinder"]),
-        name: z.string().max(80).optional(),
-        hidden: z.boolean().optional(),
-        pos: z.tuple([num, num, num]),
-        rotY: num,
-        rotX: num.optional(),
-        rotZ: num.optional(),
-        scale: z.number().min(0.01).max(100),
-        color,
-        metal: z.number().min(0).max(1).optional(),
-        rough: z.number().min(0).max(1).optional(),
-      }),
-    )
-    .max(200),
-});
+const cropRectSchema=z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1),w:z.number().positive().max(1),h:z.number().positive().max(1)}).refine(r=>r.x+r.w<=1.000001&&r.y+r.h<=1.000001);
 export const imageSchema = z.object({
   brightness: z.number().min(0).max(200),
   contrast: z.number().min(0).max(200),
@@ -69,6 +49,7 @@ export const imageSchema = z.object({
   rotation: z.number().int().min(0).max(270),
   crop: z.enum(["original", "square", "wide", "portrait"]),
   filename: z.string().max(200),
+  assetId:z.string().uuid().optional(),cropRect:cropRectSchema.optional(),exportWidth:z.number().int().min(16).max(4096).optional(),
   flipX: z.boolean().optional(),
   flipY: z.boolean().optional(),
   sepia: z.number().min(0).max(100).optional(),
@@ -81,6 +62,7 @@ export const videoSchema = z.object({
         .object({
           id: z.string().max(80),
           filename: z.string().max(200),
+          assetId:z.string().uuid().optional(),
           start: z.number().min(0),
           end: z.number().positive(),
           duration: z.number().positive().max(7200),
@@ -94,7 +76,7 @@ export const videoSchema = z.object({
     )
     .max(30),
   soundtrack: z
-    .object({ filename: z.string().max(200), volume: z.number().min(0).max(1) })
+    .object({ filename: z.string().max(200), volume: z.number().min(0).max(1),assetId:z.string().uuid().optional() })
     .optional(),
   width: z.enum(["1280", "720"]),
   bg: color,

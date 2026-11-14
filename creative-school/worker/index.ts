@@ -440,14 +440,10 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (path === "/api/progress" && method === "POST") {
     const lesson = lessonMap.get(String(b.lessonId));
     if (!lesson) return fail("NOT_FOUND", 404);
-    if (
-      !Array.isArray(b.answers) ||
-      lesson.questions.some(
-        (q, i) => b.answers instanceof Array && b.answers[i] !== q.answer,
-      ) ||
-      b.answers.length !== lesson.questions.length
-    )
-      return fail("QUIZ_FAILED", 422);
+    if (!Array.isArray(b.answers)||b.answers.length!==lesson.questions.length||b.answers.some((answer,i)=>!Number.isInteger(answer)||answer<0||answer>=lesson.questions[i].options.length))return fail('QUIZ_FAILED',422);
+    const answers=b.answers as number[];
+    const feedback=lesson.questions.map((q,i)=>({correct:answers[i]===q.answer,answer:q.answer,explanation:('explanation' in q&&q.explanation)?q.explanation:lesson.body}));
+    if(feedback.some(item=>!item.correct))return json({error:'QUIZ_FAILED',feedback},422);
     const t = now(),
       course = curriculum.find((c) => c.id === lesson.courseId)!;
     await db.batch([
@@ -473,7 +469,7 @@ async function route(req: Request, env: Env): Promise<Response> {
       .prepare("SELECT lesson_id FROM lesson_progress WHERE user_id=?")
       .bind(uid)
       .all<{ lesson_id: string }>();
-    return json({ done: r.results.map((x) => x.lesson_id) });
+    return json({ done: r.results.map((x) => x.lesson_id),feedback });
   }
   if (path === "/api/projects" && method === "GET") {
     const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);

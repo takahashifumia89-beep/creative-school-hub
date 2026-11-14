@@ -1,9 +1,9 @@
 import { L, type Localized } from "./locale";
 export const errors: Record<string, Localized> = {
   NETWORK: L(
-    "Нет связи. Изменения сохранены на устройстве; повторите позже.",
-    "Connection unavailable. Changes remain on this device; retry later.",
-    "Байланыс жоқ. Өзгерістер құрылғыда сақталды; кейін қайталаңыз.",
+    "Нет связи с сервером. Проверьте подключение и повторите запрос.",
+    "Server connection unavailable. Check your connection and retry.",
+    "Сервермен байланыс жоқ. Қосылымды тексеріп, қайталап көріңіз.",
   ),
   CONFLICT: L(
     "Проект изменён в другой вкладке. Скачайте свою копию и загрузите актуальную версию.",
@@ -70,6 +70,7 @@ export class ApiError extends Error {
   constructor(
     public code: string,
     public status: number,
+    public details:unknown = undefined,
   ) {
     super(code);
   }
@@ -95,7 +96,7 @@ export async function api<T = Record<string, unknown>>(
   if (!res.ok) {
     if (payload.error === "UNAUTHORIZED" && path !== "/me")
       window.dispatchEvent(new Event("cs-session-expired"));
-    throw new ApiError(payload.error ?? "SERVER_ERROR", res.status);
+    throw new ApiError(payload.error ?? "SERVER_ERROR", res.status,payload);
   }
   return payload;
 }
