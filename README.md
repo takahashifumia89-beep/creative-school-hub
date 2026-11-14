@@ -8,7 +8,7 @@ A trilingual creative learning workspace with React, TypeScript, Vite, Cloudflar
 - Photo workbench: draggable precise crop, comparison view, filters, undo/redo and sized PNG/JPEG/WebP exports.
 - Video workbench: composed preview, playhead, split/trim/reorder, undo/redo, titles, fades, volume, soundtrack and real-time WebM export with audio.
 - Account-scoped device media cache restores originals on the same browser; storage controls make its 350 MB limit visible. Files are not uploaded to cloud storage.
-- Trilingual studio AI tutor with direction-specific help, opt-in project summaries, temporary chat history and server-side API credentials. Activate it by adding the `OPENAI_API_KEY` Cloudflare Secret; see [AI setup](creative-school/docs/AI_SETUP.md). The assistant gives advice; it does not operate the editors.
+- Trilingual studio AI tutor through Cloudflare Workers AI with direction-specific help, opt-in project summaries and temporary chat history. No OpenAI key or paid fallback: the AI binding is configured in Wrangler, with a conservative daily free-allocation budget. Use Workers Free for a provider-enforced free limit; see [AI setup](creative-school/docs/AI_SETUP.md). The assistant gives advice; it does not operate the editors.
 - Account-bound local drafts, autosave, schema validation, optimistic version checks, public portfolio/project links, permanent badges and atomic XP events.
 - Recovery keys, password changes, session revocation, data export/deletion and request throttling.
 - Free downloadable CC0 resources. Paid commerce is intentionally unavailable until a payment provider, seller onboarding and payout handling are implemented.

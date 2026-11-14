@@ -2,6 +2,9 @@ name = "creative-school-hub"
 main = "worker/index.ts"
 compatibility_date = "2025-09-01"
 
+[ai]
+binding = "AI"
+
 [assets]
 directory = "./dist"
 not_found_handling = "single-page-application"
@@ -15,3 +18,14 @@ migrations_dir = "migrations"
 
 [observability]
 enabled = true
+
+# AI bindings are intentionally not inherited in this local-only environment.
+# Browser tests must never use the account's real inference quota.
+[env.test]
+name = "creative-school-test"
+
+[[env.test.d1_databases]]
+binding = "DB"
+database_name = "creative-school"
+database_id = "c349eba5-d411-413d-8b8f-00a183958d8b"
+migrations_dir = "migrations"

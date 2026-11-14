@@ -236,6 +236,11 @@ const errors: Record<string, Localized> = {
     "The AI service is busy or its API limit has been reached. Try again later.",
     "ЖИ сервисі бос емес немесе API шегіне жетті. Кейін қайталаңыз.",
   ),
+  AI_FREE_LIMIT: L(
+    "Бесплатная дневная квота ИИ закончилась. Новые ответы будут доступны после её обновления. Редактор и уроки работают.",
+    "The free daily AI allowance has been used. New replies will be available after it resets. The editor and lessons remain available.",
+    "ЖИ-дің тегін күндік квотасы таусылды. Квота жаңарған соң жауаптар қайта қолжетімді болады. Редактор мен сабақтар жұмыс істейді.",
+  ),
   AI_INVALID_INPUT: L(
     "Сократите вопрос до 2000 символов и повторите отправку.",
     "Keep your question within 2,000 characters and send again.",
@@ -722,9 +727,9 @@ export default function StudioAssistant({
         <p className="sa-privacy">
           {t(
             L(
-              "Вопрос и последние 6 сообщений отправляются в OpenAI. Фото, видео и файлы не передаются. Ответы ИИ могут содержать ошибки.",
-              "Your question and the last 6 messages are sent to OpenAI. Photos, videos and files are not sent. AI responses may contain errors.",
-              "Сұрағыңыз бен соңғы 6 хабарлама OpenAI-ға жіберіледі. Фото, видео мен файлдар жіберілмейді. ЖИ жауаптарында қате болуы мүмкін.",
+              "Бесплатная дневная квота · Cloudflare AI. Вопрос и до 6 последних сообщений обрабатываются Cloudflare. Фото, видео и файлы не передаются. ИИ может ошибаться.",
+              "Free daily allowance · Cloudflare AI. Cloudflare processes your question and up to 6 recent messages. Photos, videos and files are not sent. AI can make mistakes.",
+              "Тегін күндік квота · Cloudflare AI. Сұрақ пен соңғы 6 хабарламаға дейін Cloudflare өңдейді. Фото, видео мен файлдар жіберілмейді. ЖИ қателесуі мүмкін.",
             ),
           )}
         </p>
