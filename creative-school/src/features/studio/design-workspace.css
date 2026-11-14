@@ -424,3 +424,29 @@
     align-items: flex-start;
   }
 }
+
+.design-workbench .dw-shape-library {
+  border-bottom: 1px solid hsl(var(--border));
+  padding: 10px 14px;
+  background: hsl(var(--card));
+}
+.dw-shape-library summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.dw-shape-library > div {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+  padding-top: 12px;
+}
+.design-workbench .dw-shape-library button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 76px;
+  font-size: 11px;
+}

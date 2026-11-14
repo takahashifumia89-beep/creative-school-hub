@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import {
   Sparkles,
@@ -260,7 +260,6 @@ export default function StudioAssistant({
   ready,
   open,
   onClose,
-  anchorTop,
 }: {
   kind: ProjectKind;
   title: string;
@@ -268,7 +267,6 @@ export default function StudioAssistant({
   ready: boolean;
   open: boolean;
   onClose: () => void;
-  anchorTop: number;
 }) {
   const { t, lang } = useLocale();
   const [messages, setMessages] = useState<ChatMessage[]>([]),
@@ -428,7 +426,6 @@ export default function StudioAssistant({
     <aside
       id="studio-assistant-panel"
       className="studio-assistant"
-      style={{ "--sa-top": `${anchorTop}px` } as CSSProperties}
       aria-label={t(copy.title)}
       hidden={!open}
       onKeyDown={(e) => {

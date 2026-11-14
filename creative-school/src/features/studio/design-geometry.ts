@@ -1,6 +1,19 @@
 export type DesignShape = {
   id: string;
-  type: "rect" | "ellipse" | "triangle" | "text";
+  type:
+    | "rect"
+    | "ellipse"
+    | "triangle"
+    | "text"
+    | "diamond"
+    | "star"
+    | "pentagon"
+    | "hexagon"
+    | "octagon"
+    | "arrow"
+    | "cross"
+    | "parallelogram"
+    | "trapezoid";
   x: number;
   y: number;
   w: number;
@@ -22,7 +35,104 @@ export type DesignShape = {
   align?: "left" | "center" | "right";
   lineHeight?: number;
   letterSpacing?: number;
+  starPoints?: number;
+  innerRatio?: number;
 };
+export function polygonPoints(s: DesignShape): string {
+  let points: number[][];
+  switch (s.type) {
+    case "diamond":
+      points = [
+        [0.5, 0],
+        [1, 0.5],
+        [0.5, 1],
+        [0, 0.5],
+      ];
+      break;
+    case "arrow":
+      points = [
+        [0, 0.28],
+        [0.58, 0.28],
+        [0.58, 0],
+        [1, 0.5],
+        [0.58, 1],
+        [0.58, 0.72],
+        [0, 0.72],
+      ];
+      break;
+    case "cross":
+      points = [
+        [0.33, 0],
+        [0.67, 0],
+        [0.67, 0.33],
+        [1, 0.33],
+        [1, 0.67],
+        [0.67, 0.67],
+        [0.67, 1],
+        [0.33, 1],
+        [0.33, 0.67],
+        [0, 0.67],
+        [0, 0.33],
+        [0.33, 0.33],
+      ];
+      break;
+    case "parallelogram":
+      points = [
+        [0.25, 0],
+        [1, 0],
+        [0.75, 1],
+        [0, 1],
+      ];
+      break;
+    case "trapezoid":
+      points = [
+        [0.22, 0],
+        [0.78, 0],
+        [1, 1],
+        [0, 1],
+      ];
+      break;
+    case "star":
+    case "pentagon":
+    case "hexagon":
+    case "octagon": {
+      const star = s.type === "star",
+        count = star
+          ? Math.max(3, Math.min(12, Math.round(s.starPoints ?? 5)))
+          : s.type === "pentagon"
+            ? 5
+            : s.type === "hexagon"
+              ? 6
+              : 8;
+      points = Array.from({ length: star ? count * 2 : count }, (_, i) => {
+        const a = -Math.PI / 2 + (i * Math.PI * 2) / (star ? count * 2 : count);
+        const r =
+          star && i % 2
+            ? Math.max(0.15, Math.min(0.85, s.innerRatio ?? 0.45))
+            : 1;
+        return [Math.cos(a) * r, Math.sin(a) * r];
+      });
+      const xs = points.map((p) => p[0]),
+        ys = points.map((p) => p[1]),
+        minX = Math.min(...xs),
+        minY = Math.min(...ys),
+        width = Math.max(...xs) - minX,
+        height = Math.max(...ys) - minY;
+      points = points.map(([x, y]) => [
+        (x - minX) / width,
+        (y - minY) / height,
+      ]);
+      break;
+    }
+    default:
+      points = [
+        [0.5, 0],
+        [1, 1],
+        [0, 1],
+      ];
+  }
+  return points.map(([x, y]) => `${s.x + x * s.w},${s.y + y * s.h}`).join(" ");
+}
 export type Box = { x: number; y: number; w: number; h: number };
 let measurement: CanvasRenderingContext2D | null = null;
 export function textMetrics(s: DesignShape) {

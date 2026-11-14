@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import { api, download, message, type Project, type User } from "./client";
 import { L, useLocale } from "./locale";
 import { designSchema, sceneSchema } from "./schema";
-import { localBounds } from "../features/studio/design-geometry";
+import { localBounds, polygonPoints } from "../features/studio/design-geometry";
 export function Preview({ project: p }: { project: Project }) {
   if (p.kind === "design" && p.content) {
     try {
@@ -81,10 +81,7 @@ export function Preview({ project: p }: { project: Project }) {
                       ))}
                     </text>
                   ) : (
-                    <polygon
-                      points={`${s.x + s.w / 2},${s.y} ${s.x + s.w},${s.y + s.h} ${s.x},${s.y + s.h}`}
-                      fill={s.fill}
-                    />
+                    <polygon points={polygonPoints(s)} fill={s.fill} />
                   )}
                 </g>
               );

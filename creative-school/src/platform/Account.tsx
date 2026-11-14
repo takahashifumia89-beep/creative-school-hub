@@ -21,6 +21,7 @@ export function Settings({
       { current: boolean; expires_at: number }[]
     >([]),
     [busy, setBusy] = useState(false);
+  const [securityAction, setSecurityAction] = useState("password");
   useEffect(() => {
     void api<{ bio: string }>("/profile")
       .then((p) => setBio(p.bio ?? ""))
@@ -83,15 +84,7 @@ export function Settings({
   return (
     <section>
       <p className="eyebrow">ACCOUNT / PRIVACY</p>
-      <h1>
-        {t(
-          L(
-            "Профиль и безопасность",
-            "Profile and security",
-            "Профиль және қауіпсіздік",
-          ),
-        )}
-      </h1>
+      <h1>{t(L("Настройки", "Settings", "Баптаулар"))}</h1>
       <p role="status">{status}</p>
       <div className="grid2">
         <form
@@ -152,16 +145,73 @@ export function Settings({
           </p>
         </div>
       </div>
-      <div className="card">
-        <h2>
+      <details className="card">
+        <summary style={{ cursor: "pointer", fontWeight: 600 }}>
           {t(
             L(
-              "Управление доступом и данными",
-              "Access and data controls",
-              "Қолжетімділік пен деректерді басқару",
+              "Безопасность и данные",
+              "Security and data",
+              "Қауіпсіздік және деректер",
             ),
           )}
-        </h2>
+        </summary>
+        <label>
+          {t(
+            L(
+              "Что нужно сделать?",
+              "What would you like to do?",
+              "Не істегіңіз келеді?",
+            ),
+          )}
+          <select
+            aria-label={t(
+              L(
+                "Что нужно сделать?",
+                "What would you like to do?",
+                "Не істегіңіз келеді?",
+              ),
+            )}
+            value={securityAction}
+            onChange={(e) => {
+              setSecurityAction(e.target.value);
+              setNewPassword("");
+            }}
+          >
+            <option value="password">
+              {t(L("Изменить пароль", "Change password", "Құпиясөзді өзгерту"))}
+            </option>
+            <option value="recovery">
+              {t(
+                L(
+                  "Получить резервный ключ",
+                  "Get a recovery key",
+                  "Резервтік кілт алу",
+                ),
+              )}
+            </option>
+            <option value="logout-all">
+              {t(
+                L(
+                  "Выйти на всех устройствах",
+                  "Sign out all devices",
+                  "Барлық құрылғыдан шығу",
+                ),
+              )}
+            </option>
+            <option value="export">
+              {t(
+                L(
+                  "Скачать мои данные",
+                  "Download my data",
+                  "Деректерімді жүктеу",
+                ),
+              )}
+            </option>
+            <option value="delete">
+              {t(L("Удалить аккаунт", "Delete account", "Аккаунтты жою"))}
+            </option>
+          </select>
+        </label>
         <label>
           {t(L("Текущий пароль", "Current password", "Ағымдағы құпиясөз"))}
           <input
@@ -171,50 +221,68 @@ export function Settings({
             onChange={(e) => setPassword(e.target.value)}
           />
         </label>
-        <label>
-          {t(
-            L(
-              "Новый пароль — от 12 символов",
-              "New password — at least 12 characters",
-              "Жаңа құпиясөз — кемінде 12 таңба",
-            ),
-          )}
-          <input
-            type="password"
-            minLength={12}
-            autoComplete="new-password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-          />
-        </label>
+        {securityAction === "password" && (
+          <label>
+            {t(
+              L(
+                "Новый пароль — от 12 символов",
+                "New password — at least 12 characters",
+                "Жаңа құпиясөз — кемінде 12 таңба",
+              ),
+            )}
+            <input
+              type="password"
+              minLength={12}
+              autoComplete="new-password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+            />
+          </label>
+        )}
         <div className="row">
-          {(
-            ["password", "recovery", "logout-all", "export", "delete"] as const
-          ).map((a, i) => (
-            <button
-              disabled={
-                busy ||
-                !password ||
-                (a === "password" && newPassword.length < 12)
-              }
-              key={a}
-              onClick={() => void action(a)}
-            >
-              {t(
-                [
-                  L("Сменить пароль", "Change password", "Құпиясөзді ауыстыру"),
-                  L(
-                    "Новый резервный ключ",
-                    "New recovery key",
-                    "Жаңа резервтік кілт",
-                  ),
-                  L("Выйти везде", "Sign out everywhere", "Барлық жерден шығу"),
-                  L("Экспорт данных", "Export data", "Деректерді экспорттау"),
-                  L("Удалить аккаунт", "Delete account", "Аккаунтты жою"),
-                ][i],
-              )}
-            </button>
-          ))}
+          {(["password", "recovery", "logout-all", "export", "delete"] as const)
+            .filter((a) => a === securityAction)
+            .map((a) => (
+              <button
+                disabled={
+                  busy ||
+                  !password ||
+                  (a === "password" && newPassword.length < 12)
+                }
+                key={a}
+                onClick={() => void action(a)}
+              >
+                {t(
+                  [
+                    L(
+                      "Сменить пароль",
+                      "Change password",
+                      "Құпиясөзді ауыстыру",
+                    ),
+                    L(
+                      "Новый резервный ключ",
+                      "New recovery key",
+                      "Жаңа резервтік кілт",
+                    ),
+                    L(
+                      "Выйти везде",
+                      "Sign out everywhere",
+                      "Барлық жерден шығу",
+                    ),
+                    L("Экспорт данных", "Export data", "Деректерді экспорттау"),
+                    L("Удалить аккаунт", "Delete account", "Аккаунтты жою"),
+                  ][
+                    [
+                      "password",
+                      "recovery",
+                      "logout-all",
+                      "export",
+                      "delete",
+                    ].indexOf(a)
+                  ],
+                )}
+              </button>
+            ))}
         </div>
         {key && (
           <div className="notice">
@@ -226,7 +294,7 @@ export function Settings({
             </button>
           </div>
         )}
-      </div>
+      </details>
     </section>
   );
 }

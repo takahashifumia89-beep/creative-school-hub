@@ -44,6 +44,7 @@ import { L, useLocale } from "@/platform/locale";
 import { download } from "@/platform/client";
 import {
   boundsOf,
+  polygonPoints,
   clamp,
   intersects,
   localBounds,
@@ -220,6 +221,15 @@ export function DesignEditor({
         ellipse: L("Эллипс", "Ellipse", "Эллипс"),
         triangle: L("Треугольник", "Triangle", "Үшбұрыш"),
         text: L("Текст", "Text", "Мәтін"),
+        diamond: L("Ромб", "Diamond", "Ромб"),
+        star: L("Звезда", "Star", "Жұлдыз"),
+        pentagon: L("Пятиугольник", "Pentagon", "Бесбұрыш"),
+        hexagon: L("Шестиугольник", "Hexagon", "Алтыбұрыш"),
+        octagon: L("Восьмиугольник", "Octagon", "Сегізбұрыш"),
+        arrow: L("Стрелка", "Arrow", "Көрсеткі"),
+        cross: L("Крест", "Cross", "Айқыш"),
+        parallelogram: L("Параллелограмм", "Parallelogram", "Параллелограмм"),
+        trapezoid: L("Трапеция", "Trapezoid", "Трапеция"),
       }[type],
     );
   const nameFor = (s: Shape) =>
@@ -1271,6 +1281,55 @@ export function DesignEditor({
           SVG
         </button>
       </div>
+      <details className="dw-shape-library">
+        <summary>
+          {t(
+            L(
+              "Фигуры — добавить элемент",
+              "Shapes — add an element",
+              "Пішіндер — элемент қосу",
+            ),
+          )}
+        </summary>
+        <div>
+          {(
+            [
+              "diamond",
+              "star",
+              "pentagon",
+              "hexagon",
+              "octagon",
+              "arrow",
+              "cross",
+              "parallelogram",
+              "trapezoid",
+            ] as const
+          ).map((type) => (
+            <button key={type} className={button} onClick={() => add(type)}>
+              <svg
+                width="30"
+                height="28"
+                viewBox="0 0 40 36"
+                aria-hidden="true"
+              >
+                <polygon
+                  points={polygonPoints({
+                    id: "preview",
+                    type,
+                    x: 3,
+                    y: 3,
+                    w: 34,
+                    h: 30,
+                    fill: "currentColor",
+                  })}
+                  fill="currentColor"
+                />
+              </svg>
+              {typeLabel(type)}
+            </button>
+          ))}
+        </div>
+      </details>
       <div className={`dw-grid ${panelOpen ? "" : "dw-no-panel"}`}>
         <div
           className="dw-tools"
@@ -1438,9 +1497,9 @@ export function DesignEditor({
                               opacity={s.op ?? 1}
                             />
                           )}
-                          {s.type === "triangle" && (
+                          {!["rect", "ellipse", "text"].includes(s.type) && (
                             <polygon
-                              points={`${s.x + s.w / 2},${s.y} ${s.x + s.w},${s.y + s.h} ${s.x},${s.y + s.h}`}
+                              points={polygonPoints(s)}
                               fill={s.fill}
                               opacity={s.op ?? 1}
                             />
@@ -1927,6 +1986,36 @@ export function DesignEditor({
                               cur ? patch({ y: n }) : setPosition("y", n)
                             }
                           />
+                          {cur?.type === "star" && (
+                            <>
+                              <NumberField
+                                label={t(
+                                  L("Число лучей", "Star points", "Сәуле саны"),
+                                )}
+                                value={cur.starPoints ?? 5}
+                                min={3}
+                                max={12}
+                                disabled={cur.locked}
+                                onCommit={(n) =>
+                                  patch({ starPoints: Math.round(n) })
+                                }
+                              />
+                              <NumberField
+                                label={t(
+                                  L(
+                                    "Глубина звезды, %",
+                                    "Star inner radius, %",
+                                    "Жұлдыздың ішкі радиусы, %",
+                                  ),
+                                )}
+                                value={(cur.innerRatio ?? 0.45) * 100}
+                                min={15}
+                                max={85}
+                                disabled={cur.locked}
+                                onCommit={(n) => patch({ innerRatio: n / 100 })}
+                              />
+                            </>
+                          )}
                           {cur && cur.type !== "text" && (
                             <>
                               <NumberField

@@ -98,31 +98,6 @@ export default function Studio({
     id ?? creationKey.current,
   );
   const assistantLauncher = useRef<HTMLButtonElement>(null);
-  const projectbar = useRef<HTMLDivElement>(null);
-  const [assistantTop, setAssistantTop] = useState(164);
-  useEffect(() => {
-    if (!assistantUsed || !projectbar.current) return;
-    const position = () =>
-      setAssistantTop(
-        Math.max(
-          focus ? 12 : 76,
-          Math.min(
-            window.innerHeight - 260,
-            (projectbar.current?.getBoundingClientRect().bottom ?? 156) + 8,
-          ),
-        ),
-      );
-    const observer = new ResizeObserver(position);
-    observer.observe(projectbar.current);
-    window.addEventListener("resize", position);
-    window.addEventListener("scroll", position, { passive: true });
-    position();
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", position);
-      window.removeEventListener("scroll", position);
-    };
-  }, [assistantUsed, focus]);
   latest.current = draft;
   const dirty = JSON.stringify(draft) !== saved.current;
   const load = useCallback(async () => {
@@ -343,7 +318,7 @@ export default function Studio({
     );
   return (
     <div className={`studio-shell ${focus ? "is-focused" : ""}`}>
-      <div className="studio-projectbar" ref={projectbar}>
+      <div className="studio-projectbar">
         <Link
           className="studio-back"
           href="/projects"
@@ -591,7 +566,6 @@ export default function Studio({
         </section>
         {assistantUsed && (
           <StudioAssistant
-            anchorTop={assistantTop}
             key={`${user.id}:${kind}:${assistantConversation}`}
             kind={kind}
             title={draft.title}
