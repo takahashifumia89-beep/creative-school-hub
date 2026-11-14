@@ -25,7 +25,7 @@ async function login(page: Page, request: APIRequestContext) {
     ]);
   return { Cookie: `cs_session=${token}` };
 }
-test("assistant API requires authentication and fails clearly without a configured key", async ({
+test("assistant API requires authentication and fails clearly without an enabled AI binding", async ({
   page,
   request,
 }) => {
@@ -162,7 +162,7 @@ test("failed or stopped AI requests retain the question without an automatic ret
       return route.fulfill({ json: { available: true } });
     calls++;
     if (mode === "fail")
-      return route.fulfill({ status: 429, json: { error: "AI_BUSY" } });
+      return route.fulfill({ status: 429, json: { error: "AI_FREE_LIMIT" } });
     await new Promise<void>((resolve) => {
       releaseSlow = resolve;
     });
@@ -179,7 +179,9 @@ test("failed or stopped AI requests retain the question without an automatic ret
   const input = panel.getByLabel("Вопрос помощнику", { exact: true });
   await input.fill("Как выбрать формат?");
   await panel.getByRole("button", { name: "Отправить", exact: true }).click();
-  await expect(panel.getByRole("alert")).toContainText("лимит API");
+  await expect(panel.getByRole("alert")).toContainText(
+    "Бесплатная дневная квота",
+  );
   await expect(input).toHaveValue("Как выбрать формат?");
   expect(calls).toBe(1);
   mode = "slow";

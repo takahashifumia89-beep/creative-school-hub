@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import {
   assistantRequestSchema,
   summarizeStudioProject,
@@ -8,6 +9,13 @@ import {
   AssistantError,
   assistantInstructions,
   createAssistantReply,
+  assistantModel,
+  assistantAvailable,
+  buildAssistantMessages,
+  estimateAssistantNeurons,
+  assistantNeuronBudget,
+  assistantMaxOutputTokens,
+  reserveAssistantBudgetSql,
 } from "../worker/assistant";
 
 const request = assistantRequestSchema.parse({
@@ -15,20 +23,11 @@ const request = assistantRequestSchema.parse({
   language: "ru",
   message: "Как разрезать клип?",
 });
-const answer = (text: string, status = "completed") =>
-  new Response(
-    JSON.stringify({
-      status,
-      output: [
-        { type: "reasoning", summary: [] },
-        {
-          type: "message",
-          role: "assistant",
-          content: [{ type: "output_text", text }],
-        },
-      ],
-    }),
-  );
+const answer = (text: string, reason = "stop") => ({
+  choices: [
+    { message: { role: "assistant", content: text }, finish_reason: reason },
+  ],
+});
 test("assistant refuses client-provided roles, models, keys and oversized history", () => {
   for (const data of [
     { ...request, model: "expensive-model" },
@@ -116,118 +115,166 @@ test("optional summaries omit media identifiers, filenames, hidden layers and me
   assert(notes.length <= 8000);
   assert.equal(JSON.parse(notes).characters, 10000);
 });
-test("provider request keeps credentials server-side, disables storage and uses studio/language context", async () => {
-  const key = "server-only-test-key";
+test("assistant uses only the fixed Cloudflare binding even with an old OpenAI secret present", async () => {
+  const key = "unused-old-secret";
   const payload = {
     ...request,
     language: "kk" as const,
     context: { title: "Video plan", summary: '{"clipCount":2}' },
     history: [{ role: "user" as const, content: "Earlier question" }],
   };
-  const result = await createAssistantReply(
-    { OPENAI_API_KEY: key },
-    payload,
-    async (url, options) => {
-      assert.equal(url, "https://api.openai.com/v1/responses");
-      assert.equal(
-        new Headers(options?.headers).get("Authorization"),
-        `Bearer ${key}`,
-      );
-      const body = JSON.parse(String(options?.body));
-      assert.equal(body.store, false);
-      assert.equal(body.max_output_tokens, 1800);
-      assert.equal(body.model, "gpt-5.6-terra");
-      assert(
-        body.instructions.includes("Kazakh") &&
-          body.instructions.includes("No MP4 export"),
-      );
-      assert(!JSON.stringify(body).includes(key));
-      assert.equal(body.input.at(-1).content, request.message);
-      assert.equal(body.input[0].role, "user");
-      return answer("1. Клипті таңдаңыз.\n2. Ойнату орнын белгілеңіз.");
+  const env = {
+    OPENAI_API_KEY: key,
+    OPENAI_MODEL: "paid-model",
+    AI: {
+      run: async (model: string, input: any, options: any) => {
+        assert.equal(model, assistantModel);
+        assert.equal(model, "@cf/google/gemma-4-26b-a4b-it");
+        assert.equal(input.store, false);
+        assert.equal(input.stream, false);
+        assert.equal(input.max_completion_tokens, assistantMaxOutputTokens);
+        assert.equal(input.chat_template_kwargs.enable_thinking, false);
+        assert(input.messages[0].content.includes("Kazakh"));
+        assert(input.messages[0].content.includes("No MP4 export"));
+        assert.equal(input.messages[0].role, "system");
+        assert.equal(input.messages.at(-1).content, request.message);
+        assert(!JSON.stringify(input).includes(key));
+        assert(options.signal instanceof AbortSignal);
+        return answer("1. Клипті таңдаңыз.\n2. Ойнату орнын белгілеңіз.");
+      },
     },
-  );
+  };
+  const result = await createAssistantReply(env as any, payload);
   assert.equal(result.truncated, false);
   assert(result.reply.includes("Клипті"));
   assert(!JSON.stringify(result).includes(key));
   assert(assistantInstructions(payload).includes("You cannot see the canvas"));
 });
-test("missing configuration and provider failures never expose credentials or upstream errors", async () => {
+test("missing/disabled AI never falls back to a paid provider and failures are sanitized", async () => {
   let calls = 0;
-  const fetcher = async () => {
-    calls++;
-    return new Response("secret upstream diagnostic", { status: 401 });
+  const AI = {
+    run: async () => {
+      calls++;
+      throw new Error("private account diagnostic");
+    },
   };
-  await assert.rejects(
-    createAssistantReply({}, request, fetcher),
-    (e: unknown) =>
-      e instanceof AssistantError && e.code === "AI_NOT_CONFIGURED",
-  );
+  for (const env of [
+    {},
+    { OPENAI_API_KEY: "old-secret" },
+    { AI, AI_DISABLED: "true" },
+  ]) {
+    assert.equal(assistantAvailable(env), false);
+    await assert.rejects(
+      createAssistantReply(env as any, request),
+      (e: unknown) =>
+        e instanceof AssistantError && e.code === "AI_NOT_CONFIGURED",
+    );
+  }
   assert.equal(calls, 0);
   await assert.rejects(
-    createAssistantReply({ OPENAI_API_KEY: "secret" }, request, fetcher),
+    createAssistantReply({ AI } as any, request),
     (e: unknown) =>
-      e instanceof AssistantError &&
-      e.message === "AI_UNAVAILABLE" &&
-      e.status === 502,
+      e instanceof AssistantError && e.message === "AI_UNAVAILABLE",
   );
   await assert.rejects(
     createAssistantReply(
-      { OPENAI_API_KEY: "secret" },
+      {
+        AI: {
+          run: async () => {
+            throw Object.assign(new Error("private"), { status: 429 });
+          },
+        },
+      } as any,
       request,
-      async () => new Response("private", { status: 429 }),
     ),
-    (e: unknown) => e instanceof AssistantError && e.code === "AI_BUSY",
+    (e: unknown) => e instanceof AssistantError && e.code === "AI_FREE_LIMIT",
   );
 });
-test("assistant handles refusal, truncation, malformed responses and deadlines", async () => {
-  const env = { OPENAI_API_KEY: "server-only-test-key" };
-  const result = await createAssistantReply(env, request, async () =>
-    answer("Partial guidance", "incomplete"),
+test("Cloudflare completion handles refusal, truncation, malformed responses and deadlines", async () => {
+  const run = (value: unknown) => ({ AI: { run: async () => value } }) as any;
+  assert.equal(
+    (
+      await createAssistantReply(
+        run(answer("Partial guidance", "length")),
+        request,
+      )
+    ).truncated,
+    true,
   );
-  assert.equal(result.truncated, true);
-  const refusal = await createAssistantReply(
-    env,
-    request,
-    async () =>
-      new Response(
-        JSON.stringify({
-          status: "completed",
-          output: [
-            {
-              type: "message",
-              role: "assistant",
-              content: [
-                { type: "refusal", refusal: "Please ask about creative work." },
-              ],
-            },
-          ],
-        }),
-      ),
+  const refusal = {
+    choices: [
+      {
+        message: { refusal: "Please ask about creative work." },
+        finish_reason: "stop",
+      },
+    ],
+  };
+  assert.equal(
+    (await createAssistantReply(run(refusal), request)).reply,
+    "Please ask about creative work.",
   );
-  assert.equal(refusal.reply, "Please ask about creative work.");
   for (const bad of [
-    "invalid JSON",
-    JSON.stringify({ status: "completed", output: [] }),
-    "x".repeat(128001),
+    null,
+    {},
+    { choices: [] },
+    { choices: [{ message: { content: "" } }] },
+    { choices: [{ message: { reasoning_content: "private reasoning" } }] },
   ])
     await assert.rejects(
-      createAssistantReply(env, request, async () => new Response(bad)),
+      createAssistantReply(run(bad), request),
       (e: unknown) =>
         e instanceof AssistantError && e.code === "AI_UNAVAILABLE",
     );
+  const hang = { AI: { run: async () => new Promise(() => undefined) } } as any;
   await assert.rejects(
-    createAssistantReply(
-      env,
-      request,
-      (_url, options) =>
-        new Promise((_resolve, reject) =>
-          options?.signal?.addEventListener("abort", () =>
-            reject(new Error("aborted")),
-          ),
-        ),
-      5,
-    ),
+    createAssistantReply(hang, request, 5),
     (e: unknown) => e instanceof AssistantError && e.code === "AI_TIMEOUT",
   );
+});
+test("free input budget keeps the current question and bounds Unicode/history/context", () => {
+  const full = {
+    ...request,
+    message: "Қазақша".repeat(200),
+    history: Array.from({ length: 6 }, (_, i) => ({
+      role: i % 2 ? ("assistant" as const) : ("user" as const),
+      content: "Старое сообщение".repeat(200),
+    })),
+    context: { title: "Project", summary: "я".repeat(8000) },
+  };
+  const messages = buildAssistantMessages(full);
+  assert.equal(messages.at(-1)?.content, full.message);
+  assert(new TextEncoder().encode(JSON.stringify(messages)).length <= 12000);
+  assert(estimateAssistantNeurons(messages) < 150);
+  assert.throws(
+    () => buildAssistantMessages({ ...request, message: "\0".repeat(2000) }),
+    AssistantError,
+  );
+});
+test("daily free-budget reservation is atomic and refuses work beyond the hard cap", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(
+    "CREATE TABLE rate_limits(key TEXT PRIMARY KEY,count INTEGER NOT NULL,expires INTEGER NOT NULL)",
+  );
+  const reserve = (key: string, amount: number) =>
+    db
+      .prepare(reserveAssistantBudgetSql)
+      .get(
+        key,
+        amount,
+        86400000,
+        amount,
+        assistantNeuronBudget,
+        assistantNeuronBudget,
+      );
+  assert(reserve("day-one", 5990));
+  assert(reserve("day-one", 10));
+  assert.equal(reserve("day-one", 1), undefined);
+  assert.equal(
+    db.prepare("SELECT count FROM rate_limits WHERE key='day-one'").get()
+      ?.count,
+    6000,
+  );
+  assert.equal(reserve("too-big", 6001), undefined);
+  assert(reserve("next-day", 100));
+  db.close();
 });

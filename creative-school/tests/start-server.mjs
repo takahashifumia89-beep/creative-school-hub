@@ -4,7 +4,18 @@ const state = ".wrangler/e2e-state";
 rmSync(state, { recursive: true, force: true });
 const server = spawn(
   "npx",
-  ["wrangler", "dev", "--port", "8790", "--persist-to", state],
+  [
+    "wrangler",
+    "dev",
+    "--env",
+    "test",
+    "--port",
+    "8790",
+    "--persist-to",
+    state,
+    "--var",
+    "AI_DISABLED:true",
+  ],
   { stdio: "inherit" },
 );
 for (const signal of ["SIGTERM", "SIGINT"])

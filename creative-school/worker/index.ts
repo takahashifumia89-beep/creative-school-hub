@@ -7,6 +7,10 @@ import {
 } from "../src/platform/assistant-context";
 import {
   AssistantError,
+  assistantAvailable,
+  assistantSiteDailyLimit,
+  buildAssistantMessages,
+  reserveAssistantBudget,
   createAssistantReply,
   type AssistantEnv,
 } from "./assistant";
@@ -385,13 +389,19 @@ async function route(req: Request, env: Env): Promise<Response> {
     return fail("RATE_LIMIT", 429);
   if (path === "/api/assistant" && method === "GET")
     return json({
-      available: !!env.OPENAI_API_KEY?.trim(),
+      available: assistantAvailable(env),
       dailyLimit: assistantDailyLimit,
     });
   if (path === "/api/assistant" && method === "POST") {
     const parsed = assistantRequestSchema.safeParse(b);
     if (!parsed.success) return fail("AI_INVALID_INPUT");
-    if (!env.OPENAI_API_KEY?.trim()) return fail("AI_NOT_CONFIGURED", 503);
+    if (!assistantAvailable(env)) return fail("AI_NOT_CONFIGURED", 503);
+    let messages: ReturnType<typeof buildAssistantMessages>;
+    try {
+      messages = buildAssistantMessages(parsed.data);
+    } catch {
+      return fail("AI_INVALID_INPUT");
+    }
     if (!(await limit(db, `ai:minute:${uid}`, 4, 60)))
       return json({ error: "AI_RATE_LIMIT" }, 429, { "Retry-After": "60" });
     if (
@@ -399,13 +409,17 @@ async function route(req: Request, env: Env): Promise<Response> {
       !(await limit(db, `ai:ip:${ip}`, 40, 86400))
     )
       return fail("AI_DAILY_LIMIT", 429);
-    const configured = Number(env.AI_DAILY_LIMIT ?? "100");
+    const configured = Number(
+      env.AI_DAILY_LIMIT ?? String(assistantSiteDailyLimit),
+    );
     const globalLimit =
-      Number.isInteger(configured) && configured >= 1 && configured <= 10000
-        ? configured
-        : 100;
-    if (!(await limit(db, "ai:global", globalLimit, 86400)))
+      Number.isInteger(configured) && configured >= 1
+        ? Math.min(configured, assistantSiteDailyLimit)
+        : assistantSiteDailyLimit;
+    if (!(await limit(db, "ai:free-global", globalLimit, 86400)))
       return fail("AI_DAILY_LIMIT", 429);
+    if (!(await reserveAssistantBudget(db, messages)))
+      return fail("AI_FREE_LIMIT", 429);
     try {
       return json(await createAssistantReply(env, parsed.data));
     } catch (e) {
