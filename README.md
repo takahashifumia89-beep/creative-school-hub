@@ -2,11 +2,12 @@
 
 A trilingual creative learning workspace with React, TypeScript, Vite, Cloudflare Workers and D1/SQLite. The application lives in [`creative-school/`](creative-school/).
 
-- 8 learning paths / 32 lessons, practice briefs and server-validated quizzes in Russian, English and Kazakh. Existing extended Russian reading is preserved as an optional appendix.
-- Design editor: shapes, text, layers, alignment, sizing, templates, undo/redo, PNG/SVG and JSON.
-- 3D editor: primitives, transforms, PBR material controls, lighting, PNG, editable JSON and GLB export.
-- Image editor: center cropping, rotation, brightness, contrast, saturation, grayscale and PNG export.
-- Video editor: clip ordering, trimming, titles, volume and real-time WebM export with audio.
+- 8 learning paths / 32 substantive lessons with worked examples, practice, self-review, 96 questions with explanations and 30 linked sources in Russian, English and Kazakh. Account-scoped notes, reading downloads and offline quiz queues are included. Existing extended Russian reading is preserved as an optional appendix.
+- Design workbench: zoom/pan, multi-selection, snapping, precise transforms, layers, multiline typography, templates, transactional undo/redo and PNG/SVG/JSON exports.
+- 3D workbench: hierarchy, precise transforms, PBR materials, camera views, editable mesh vertices, safe OBJ import and OBJ/GLB/PNG/JSON exports.
+- Photo workbench: draggable precise crop, comparison view, filters, undo/redo and sized PNG/JPEG/WebP exports.
+- Video workbench: composed preview, playhead, split/trim/reorder, undo/redo, titles, fades, volume, soundtrack and real-time WebM export with audio.
+- Account-scoped device media cache restores originals on the same browser; storage controls make its 350 MB limit visible. Files are not uploaded to cloud storage.
 - Account-bound local drafts, autosave, schema validation, optimistic version checks, public portfolio/project links, permanent badges and atomic XP events.
 - Recovery keys, password changes, session revocation, data export/deletion and request throttling.
 - Free downloadable CC0 resources. Paid commerce is intentionally unavailable until a payment provider, seller onboarding and payout handling are implemented.
@@ -47,3 +48,5 @@ The Worker performs an **additive, idempotent schema upgrade** on its first API 
 Keep production backups enabled and verify the D1 binding/database ID in `wrangler.toml`. Never replace an existing database just to deploy this update.
 
 See [the architecture and limits](creative-school/docs/PLATFORM.md) for supported formats, recovery behavior, security boundaries and remaining work. This repository does not claim feature parity with desktop creative suites.
+
+Course references and access notes are listed in [SOURCES.md](creative-school/docs/SOURCES.md). Lesson explanations and examples are original teaching material; linked external articles and videos retain their publishers' terms.
