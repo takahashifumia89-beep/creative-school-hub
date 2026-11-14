@@ -79,6 +79,7 @@ export async function api<T = Record<string, unknown>>(
   path: string,
   method = "GET",
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   let res: Response;
   try {
@@ -88,8 +89,10 @@ export async function api<T = Record<string, unknown>>(
       headers:
         body === undefined ? undefined : { "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
-  } catch {
+  } catch (e) {
+    if (signal?.aborted) throw e;
     throw new ApiError("NETWORK", 0);
   }
   const payload = await res.json().catch(() => ({}));

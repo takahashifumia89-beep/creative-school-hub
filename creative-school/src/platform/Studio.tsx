@@ -17,6 +17,7 @@ import {
   Upload,
   Check,
   AlertCircle,
+  Sparkles,
 } from "lucide-react";
 import { useLocale, L } from "./locale";
 import {
@@ -29,6 +30,7 @@ import {
 } from "./client";
 import { validDocument, draftSchema, type ProjectKind } from "./schema";
 import "./studio-shell.css";
+import StudioAssistant from "./StudioAssistant";
 const Design = lazy(() =>
   import("../features/studio/DesignEditor").then((m) => ({
     default: m.DesignEditor,
@@ -84,12 +86,43 @@ export default function Studio({
     [blocked, setBlocked] = useState(false),
     [saving, setSaving] = useState(false),
     [focus, setFocus] = useState(false),
-    [settings, setSettings] = useState(false);
+    [settings, setSettings] = useState(false),
+    [assistantOpen, setAssistantOpen] = useState(false),
+    [assistantUsed, setAssistantUsed] = useState(false);
   const saved = useRef(JSON.stringify(draft)),
     latest = useRef(draft),
     lock = useRef(false),
     created = useRef<string | null>(null),
     creationKey = useRef(crypto.randomUUID());
+  const [assistantConversation, setAssistantConversation] = useState(
+    id ?? creationKey.current,
+  );
+  const assistantLauncher = useRef<HTMLButtonElement>(null);
+  const projectbar = useRef<HTMLDivElement>(null);
+  const [assistantTop, setAssistantTop] = useState(164);
+  useEffect(() => {
+    if (!assistantUsed || !projectbar.current) return;
+    const position = () =>
+      setAssistantTop(
+        Math.max(
+          focus ? 12 : 76,
+          Math.min(
+            window.innerHeight - 260,
+            (projectbar.current?.getBoundingClientRect().bottom ?? 156) + 8,
+          ),
+        ),
+      );
+    const observer = new ResizeObserver(position);
+    observer.observe(projectbar.current);
+    window.addEventListener("resize", position);
+    window.addEventListener("scroll", position, { passive: true });
+    position();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", position);
+      window.removeEventListener("scroll", position);
+    };
+  }, [assistantUsed, focus]);
   latest.current = draft;
   const dirty = JSON.stringify(draft) !== saved.current;
   const load = useCallback(async () => {
@@ -120,6 +153,7 @@ export default function Studio({
       created.current = null;
       return;
     }
+    setAssistantConversation(id ?? creationKey.current);
     try {
       const r = draftSchema.safeParse(
         JSON.parse(localStorage.getItem(key) ?? "null"),
@@ -309,7 +343,7 @@ export default function Studio({
     );
   return (
     <div className={`studio-shell ${focus ? "is-focused" : ""}`}>
-      <div className="studio-projectbar">
+      <div className="studio-projectbar" ref={projectbar}>
         <Link
           className="studio-back"
           href="/projects"
@@ -338,6 +372,19 @@ export default function Studio({
           {status}
         </span>
         <div className="studio-project-actions">
+          <button
+            ref={assistantLauncher}
+            className="studio-action"
+            aria-expanded={assistantOpen}
+            aria-controls="studio-assistant-panel"
+            onClick={() => {
+              setAssistantUsed(true);
+              setAssistantOpen(!assistantOpen);
+            }}
+          >
+            <Sparkles size={15} />
+            {t(L("ИИ-помощник", "AI assistant", "ЖИ көмекшісі"))}
+          </button>
           <button
             className="studio-action studio-save"
             disabled={!ready || blocked || saving || !draft.title.trim()}
@@ -491,54 +538,73 @@ export default function Studio({
           </button>
         </div>
       )}
-      <section className="studio-editor-frame" aria-label={name}>
-        {ready ? (
-          <Suspense
-            fallback={
-              <p className="studio-loading">
-                {t(
-                  L(
-                    "Загрузка инструментов…",
-                    "Loading tools…",
-                    "Құралдар жүктелуде…",
-                  ),
-                )}
-              </p>
-            }
-          >
-            {kind === "design" ? (
-              <Design value={JSON.parse(draft.content)} onChange={update} />
-            ) : kind === "3d" ? (
-              <Model value={JSON.parse(draft.content)} onChange={update} />
-            ) : kind === "notes" ? (
-              <textarea
-                className="studio-notes"
-                value={draft.content}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, content: e.target.value }))
-                }
-              />
-            ) : (
-              <Media
-                kind={kind}
-                value={JSON.parse(draft.content)}
-                onChange={update}
-                cacheScope={user.id}
-              />
-            )}
-          </Suspense>
-        ) : (
-          <p className="studio-loading">
-            {t(
-              L(
-                "Проект не загружен. Редактирование заблокировано.",
-                "Project not loaded. Editing is blocked.",
-                "Жоба жүктелмеді. Өңдеу бұғатталған.",
-              ),
-            )}
-          </p>
+      <div
+        className={`studio-work-area ${assistantOpen ? "has-assistant" : ""}`}
+      >
+        <section className="studio-editor-frame" aria-label={name}>
+          {ready ? (
+            <Suspense
+              fallback={
+                <p className="studio-loading">
+                  {t(
+                    L(
+                      "Загрузка инструментов…",
+                      "Loading tools…",
+                      "Құралдар жүктелуде…",
+                    ),
+                  )}
+                </p>
+              }
+            >
+              {kind === "design" ? (
+                <Design value={JSON.parse(draft.content)} onChange={update} />
+              ) : kind === "3d" ? (
+                <Model value={JSON.parse(draft.content)} onChange={update} />
+              ) : kind === "notes" ? (
+                <textarea
+                  className="studio-notes"
+                  value={draft.content}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, content: e.target.value }))
+                  }
+                />
+              ) : (
+                <Media
+                  kind={kind}
+                  value={JSON.parse(draft.content)}
+                  onChange={update}
+                  cacheScope={user.id}
+                />
+              )}
+            </Suspense>
+          ) : (
+            <p className="studio-loading">
+              {t(
+                L(
+                  "Проект не загружен. Редактирование заблокировано.",
+                  "Project not loaded. Editing is blocked.",
+                  "Жоба жүктелмеді. Өңдеу бұғатталған.",
+                ),
+              )}
+            </p>
+          )}
+        </section>
+        {assistantUsed && (
+          <StudioAssistant
+            anchorTop={assistantTop}
+            key={`${user.id}:${kind}:${assistantConversation}`}
+            kind={kind}
+            title={draft.title}
+            content={draft.content}
+            ready={ready}
+            open={assistantOpen}
+            onClose={() => {
+              setAssistantOpen(false);
+              assistantLauncher.current?.focus();
+            }}
+          />
         )}
-      </section>
+      </div>
     </div>
   );
 }

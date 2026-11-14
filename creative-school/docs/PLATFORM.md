@@ -26,6 +26,12 @@ The 3D workbench provides hierarchy, names, visibility/locks, exact position/rot
 
 The 2D workbench supports pan/zoom/fit, rotated multi-selection, snapping/guides, alignment/distribution, precise numeric transforms, layers with names/visibility/locks, multiline typography, templates and transactional undo/redo. SVG/PNG exports omit editing handles and optionally omit the background; PNG is capped at 4096 pixels. The clipboard stays inside this editor. Arbitrary paths, Boolean operations and raster placement are not implemented. Focus mode hides the surrounding navigation; Escape restores it. New untitled documents are created only after an edit, and the first server save preserves the active editor and loaded media.
 
+## Studio AI tutor
+
+The assistant is an authenticated server-side integration with OpenAI's Responses API. It uses the current studio's actual capabilities and RU/EN/KK language, plus optional summarized parameters from the current document. Project sharing is off by default. Media bytes, source filenames, cache IDs, hidden objects and mesh vertex arrays are excluded from generated summaries. Text in visible layers/notes may be shared when the user enables the option. The assistant cannot see pixels, listen to audio or operate the editor.
+
+The Worker holds `OPENAI_API_KEY` as a Cloudflare Secret and never returns it. No key entry exists in the public client. Requests reject arbitrary roles, provider URLs, models and extra fields; the endpoint applies existing session/origin checks, bounded inputs and D1 request quotas. Conversations remain in page memory, never D1. Replies render as escaped text. The provider receives `store: false`; its own data policies still apply. Timeouts and provider errors are sanitized. Cancel stops browser waiting and never automatically retries; it may not stop already billed upstream work. Configuration, limits and secure activation steps are in [AI_SETUP.md](AI_SETUP.md). Without a key, the panel shows its unavailable state and offers related lessons.
+
 ## Security and accounts
 
 Passwords use PBKDF2-SHA256 (100,000 iterations, the Worker limit), independent random salts, and versioned compatibility with existing password hashes. Session tokens and recovery keys are stored as SHA-256 hashes. Secure HttpOnly SameSite=Lax session cookies expire in 30 days. Write requests require same-origin JSON; project queries enforce ownership. The admin statistics endpoint checks the role on the server; client-side visibility never grants permissions.
