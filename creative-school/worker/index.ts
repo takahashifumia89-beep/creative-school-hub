@@ -1,7 +1,16 @@
 import { ensureSchema } from "./schema";
 import { curriculum, lessonMap } from "../src/platform/curriculum";
 import { kinds, validDocument, type ProjectKind } from "../src/platform/schema";
-interface Env {
+import {
+  assistantRequestSchema,
+  assistantDailyLimit,
+} from "../src/platform/assistant-context";
+import {
+  AssistantError,
+  createAssistantReply,
+  type AssistantEnv,
+} from "./assistant";
+interface Env extends AssistantEnv {
   DB: D1Database;
 }
 type Row = Record<string, unknown>;
@@ -374,6 +383,37 @@ async function route(req: Request, env: Env): Promise<Response> {
   const uid = String(user.id);
   if (write && !(await limit(db, `write:${uid}`, 120, 60)))
     return fail("RATE_LIMIT", 429);
+  if (path === "/api/assistant" && method === "GET")
+    return json({
+      available: !!env.OPENAI_API_KEY?.trim(),
+      dailyLimit: assistantDailyLimit,
+    });
+  if (path === "/api/assistant" && method === "POST") {
+    const parsed = assistantRequestSchema.safeParse(b);
+    if (!parsed.success) return fail("AI_INVALID_INPUT");
+    if (!env.OPENAI_API_KEY?.trim()) return fail("AI_NOT_CONFIGURED", 503);
+    if (!(await limit(db, `ai:minute:${uid}`, 4, 60)))
+      return json({ error: "AI_RATE_LIMIT" }, 429, { "Retry-After": "60" });
+    if (
+      !(await limit(db, `ai:day:${uid}`, assistantDailyLimit, 86400)) ||
+      !(await limit(db, `ai:ip:${ip}`, 40, 86400))
+    )
+      return fail("AI_DAILY_LIMIT", 429);
+    const configured = Number(env.AI_DAILY_LIMIT ?? "100");
+    const globalLimit =
+      Number.isInteger(configured) && configured >= 1 && configured <= 10000
+        ? configured
+        : 100;
+    if (!(await limit(db, "ai:global", globalLimit, 86400)))
+      return fail("AI_DAILY_LIMIT", 429);
+    try {
+      return json(await createAssistantReply(env, parsed.data));
+    } catch (e) {
+      return e instanceof AssistantError
+        ? fail(e.code, e.status)
+        : fail("AI_UNAVAILABLE", 502);
+    }
+  }
   if (path === "/api/auth/signout" && method === "POST") {
     await db
       .prepare("DELETE FROM sessions WHERE token_hash=?")
