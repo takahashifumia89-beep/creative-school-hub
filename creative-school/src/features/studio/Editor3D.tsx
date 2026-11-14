@@ -1,558 +1,70 @@
-import { useLocale, L } from "@/platform/locale";
-import { useEditorText } from "@/platform/editor-labels";
-import { useRef, useState } from "react";
-import { Canvas } from "@react-three/fiber";
-import { OrbitControls, TransformControls } from "@react-three/drei";
-import {
-  Scene,
-  Mesh,
-  MeshStandardMaterial,
-  BoxGeometry,
-  SphereGeometry,
-  ConeGeometry,
-  TorusGeometry,
-  CylinderGeometry,
-  type WebGLRenderer,
-} from "three";
-import { download } from "@/platform/client";
-import {
-  Copy,
-  Download,
-  Move3d,
-  Redo2,
-  Rotate3d,
-  Scale3d,
-  Trash2,
-  Undo2,
-} from "lucide-react";
-export type Obj = {
-  id: string;
-  kind: "box" | "sphere" | "cone" | "torus" | "cylinder";
-  name?: string;
-  hidden?: boolean;
-  pos: [number, number, number];
-  rotY: number;
-  rotX?: number;
-  rotZ?: number;
-  scale: number;
-  color: string;
-  metal?: number;
-  rough?: number;
-};
-export type SceneDoc = {
-  bg: string;
-  objects: Obj[];
-  light?: number;
-  ground?: boolean;
-  wireframe?: boolean;
-};
-export const emptyScene: SceneDoc = {
-  bg: "#1b1b22",
-  objects: [],
-  light: 1.6,
-  ground: true,
-};
-const kinds: {
-  kind: Obj["kind"];
-  label: string;
-}[] = [
-  { kind: "box", label: "Куб" },
-  { kind: "sphere", label: "Шар" },
-  { kind: "cone", label: "Конус" },
-  { kind: "torus", label: "Тор" },
-  { kind: "cylinder", label: "Цилиндр" },
-];
-const btn =
-  "inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium hover:border-primary disabled:opacity-40";
-const lbl = "text-xs font-medium";
-export function Editor3D({
-  value,
-  onChange,
-}: {
-  value: SceneDoc;
-  onChange: (doc: SceneDoc) => void;
-}) {
-  const tx = useEditorText();
-  const { t } = useLocale();
-  const [sel, setSel] = useState<string | null>(null);
-  const [mode, setMode] = useState<"translate" | "rotate" | "scale">(
-    "translate",
-  );
-  const ref = useRef<Mesh>(null);
-  const gl = useRef<WebGLRenderer | null>(null);
-  const past = useRef<SceneDoc[]>([]);
-  const future = useRef<SceneDoc[]>([]);
-  const cur = value.objects.find((o) => o.id === sel) ?? null;
-  const begin = () => {
-    past.current = [...past.current.slice(-49), value];
-    future.current = [];
-  };
-  const edit = (doc: SceneDoc) => {
-    begin();
-    onChange(doc);
-  };
-  const undo = () => {
-    const p = past.current.pop();
-    if (p) {
-      future.current.push(value);
-      onChange(p);
-    }
-  };
-  const redo = () => {
-    const f = future.current.pop();
-    if (f) {
-      past.current.push(value);
-      onChange(f);
-    }
-  };
-  const live = (p: Partial<Obj>) =>
-    cur &&
-    onChange({
-      ...value,
-      objects: value.objects.map((o) => (o.id === cur.id ? { ...o, ...p } : o)),
-    });
-  const add = (kind: Obj["kind"]) => {
-    const o: Obj = {
-      id: crypto.randomUUID(),
-      kind,
-      pos: [0, 0.8, 0],
-      rotY: 0,
-      scale: 1,
-      color: "#e8590c",
-      metal: 0.1,
-      rough: 0.5,
-    };
-    edit({ ...value, objects: [...value.objects, o] });
-    setSel(o.id);
-  };
-  const duplicate = () => {
-    if (!cur) return;
-    const c: Obj = {
-      ...cur,
-      id: crypto.randomUUID(),
-      pos: [cur.pos[0] + 1, cur.pos[1], cur.pos[2]],
-    };
-    edit({ ...value, objects: [...value.objects, c] });
-    setSel(c.id);
-  };
-  const remove = () => {
-    if (!cur) return;
-    edit({ ...value, objects: value.objects.filter((o) => o.id !== cur.id) });
-    setSel(null);
-  };
-  const setAxis = (i: 0 | 1 | 2, v: number) => {
-    if (cur) {
-      const pos = [...cur.pos] as Obj["pos"];
-      pos[i] = v;
-      live({ pos });
-    }
-  };
-  const sync = () => {
-    const m = ref.current;
-    if (!m || !cur) return;
-    live({
-      pos: [
-        +m.position.x.toFixed(2),
-        +m.position.y.toFixed(2),
-        +m.position.z.toFixed(2),
-      ],
-      rotX: (m.rotation.x * 180) / Math.PI,
-      rotY: (m.rotation.y * 180) / Math.PI,
-      rotZ: (m.rotation.z * 180) / Math.PI,
-      scale: Math.min(3, Math.max(0.2, +m.scale.x.toFixed(2))),
-    });
-  };
-  const exportModel = async () => {
-    const { GLTFExporter } =
-      await import("three/examples/jsm/exporters/GLTFExporter.js");
-    const scene = new Scene();
-    for (const o of value.objects.filter((o) => !o.hidden)) {
-      const geometry =
-        o.kind === "box"
-          ? new BoxGeometry(1.4, 1.4, 1.4)
-          : o.kind === "sphere"
-            ? new SphereGeometry(0.8, 32, 32)
-            : o.kind === "cone"
-              ? new ConeGeometry(0.8, 1.6, 32)
-              : o.kind === "torus"
-                ? new TorusGeometry(0.7, 0.28, 24, 48)
-                : new CylinderGeometry(0.6, 0.6, 1.6, 32);
-      const mesh = new Mesh(
-        geometry,
-        new MeshStandardMaterial({
-          color: o.color,
-          metalness: o.metal ?? 0.1,
-          roughness: o.rough ?? 0.5,
-        }),
-      );
-      mesh.name = o.name ?? o.kind;
-      mesh.position.set(...o.pos);
-      mesh.rotation.set(
-        ((o.rotX ?? 0) * Math.PI) / 180,
-        (o.rotY * Math.PI) / 180,
-        ((o.rotZ ?? 0) * Math.PI) / 180,
-      );
-      mesh.scale.setScalar(o.scale);
-      scene.add(mesh);
-    }
-    try {
-      const result = await new GLTFExporter().parseAsync(scene, {
-        binary: true,
-      });
-      download(
-        "scene.glb",
-        new Blob([result as ArrayBuffer], { type: "model/gltf-binary" }),
-      );
-    } finally {
-      scene.traverse((o) => {
-        if (o instanceof Mesh) {
-          o.geometry.dispose();
-          (o.material as MeshStandardMaterial).dispose();
-        }
-      });
-    }
-  };
-  const shot = () => {
-    const c = gl.current?.domElement;
-    if (!c) return;
-    const a = document.createElement("a");
-    a.href = c.toDataURL("image/png");
-    a.download = "scene.png";
-    a.click();
-  };
-  const key = (e: React.KeyboardEvent) => {
-    if (
-      ["INPUT", "TEXTAREA", "SELECT"].includes(
-        (e.target as HTMLElement).tagName,
-      )
-    )
-      return;
-    const mod = e.ctrlKey || e.metaKey,
-      k = e.key.toLowerCase();
-    if (mod && k === "z") {
-      e.preventDefault();
-      e.shiftKey ? redo() : undo();
-    } else if (mod && k === "y") {
-      e.preventDefault();
-      redo();
-    } else if (mod && k === "d") {
-      e.preventDefault();
-      duplicate();
-    } else if (k === "delete" || k === "backspace") remove();
-  };
-  return (
-    <div className="w-full outline-none" tabIndex={0} onKeyDown={key}>
-      <div className="mb-3 flex flex-wrap gap-2">
-        <button className={btn} onClick={undo} disabled={!past.current.length}>
-          <Undo2 size={14} />
-          {tx("Отменить")}
-        </button>
-        <button
-          className={btn}
-          onClick={redo}
-          disabled={!future.current.length}
-        >
-          <Redo2 size={14} />
-          {tx("Вернуть")}
-        </button>
-        {(
-          [
-            ["translate", tx("Двигать"), Move3d],
-            ["rotate", tx("Вращать"), Rotate3d],
-            ["scale", tx("Размер"), Scale3d],
-          ] as const
-        ).map(([m, label, Icon]) => (
-          <button
-            key={m}
-            className={`${btn} ${mode === m ? "border-primary bg-primary/10" : ""}`}
-            onClick={() => setMode(m)}
-          >
-            <Icon size={14} /> {tx(label)}
-          </button>
-        ))}
-        <button className={btn} onClick={() => void exportModel()}>
-          GLB ↓
-        </button>
-        <button className={btn} onClick={shot}>
-          <Download size={14} /> PNG
-        </button>
-      </div>
-      <div
-        className="h-[420px] overflow-hidden rounded-xl border border-border"
-        style={{ background: value.bg }}
-      >
-        <Canvas
-          camera={{ position: [5, 4, 6], fov: 50 }}
-          gl={{ preserveDrawingBuffer: true }}
-          onCreated={(s) => {
-            gl.current = s.gl;
-          }}
-          onPointerMissed={() => setSel(null)}
-        >
-          <ambientLight intensity={0.6} />
-          <directionalLight
-            position={[5, 8, 4]}
-            intensity={value.light ?? 1.6}
-          />
-          <gridHelper args={[20, 20, "#666", "#333"]} />
-          {value.ground !== false && (
-            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]}>
-              <planeGeometry args={[30, 30]} />
-              <meshStandardMaterial color="#2a2a33" />
-            </mesh>
-          )}
-          {value.objects
-            .filter((o) => !o.hidden)
-            .map((o) => {
-              const mesh = (
-                <mesh
-                  key={o.id}
-                  ref={o.id === sel ? ref : undefined}
-                  position={o.pos}
-                  rotation={[
-                    ((o.rotX ?? 0) * Math.PI) / 180,
-                    (o.rotY * Math.PI) / 180,
-                    ((o.rotZ ?? 0) * Math.PI) / 180,
-                  ]}
-                  scale={o.scale}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSel(o.id);
-                  }}
-                >
-                  {o.kind === "box" && <boxGeometry args={[1.4, 1.4, 1.4]} />}
-                  {o.kind === "sphere" && (
-                    <sphereGeometry args={[0.8, 32, 32]} />
-                  )}
-                  {o.kind === "cone" && <coneGeometry args={[0.8, 1.6, 32]} />}
-                  {o.kind === "torus" && (
-                    <torusGeometry args={[0.7, 0.28, 24, 48]} />
-                  )}
-                  {o.kind === "cylinder" && (
-                    <cylinderGeometry args={[0.6, 0.6, 1.6, 32]} />
-                  )}
-                  <meshStandardMaterial
-                    color={o.color}
-                    metalness={o.metal ?? 0.1}
-                    roughness={o.rough ?? 0.5}
-                    wireframe={!!value.wireframe}
-                    emissive={o.id === sel ? "#333333" : "#000000"}
-                  />
-                </mesh>
-              );
-              return o.id === sel ? (
-                <TransformControls
-                  key={o.id}
-                  mode={mode}
-                  showX
-                  showY
-                  showZ
-                  onMouseDown={begin}
-                  onMouseUp={sync}
-                >
-                  {mesh}
-                </TransformControls>
-              ) : (
-                mesh
-              );
-            })}
-          <OrbitControls makeDefault />
-        </Canvas>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {kinds.map((k) => (
-          <button key={k.kind} className={btn} onClick={() => add(k.kind)}>
-            + {tx(k.label)}
-          </button>
-        ))}
-        <label className={`${btn} cursor-pointer`}>
-          {tx("Фон")}
-          <input
-            type="color"
-            value={value.bg}
-            onFocus={begin}
-            onChange={(e) => onChange({ ...value, bg: e.target.value })}
-            className="h-5 w-6 border-0 bg-transparent p-0"
-          />
-        </label>
-        <label className={`${btn} cursor-pointer`}>
-          <input
-            type="checkbox"
-            checked={value.ground !== false}
-            onChange={(e) => edit({ ...value, ground: e.target.checked })}
-          />
-          {tx("Пол")}
-        </label>
-        <label className={`${btn}`}>
-          {tx("Свет")}
-          <input
-            type="range"
-            min={0.2}
-            max={3}
-            step={0.1}
-            value={value.light ?? 1.6}
-            onPointerDown={begin}
-            onChange={(e) =>
-              onChange({ ...value, light: Number(e.target.value) })
-            }
-            className="w-24"
-          />
-        </label>
-      </div>
-      <div className="mt-4 rounded-xl border border-border bg-background p-3">
-        <label className="mb-3 flex items-center gap-2 text-xs">
-          <input
-            type="checkbox"
-            checked={!!value.wireframe}
-            onChange={(e) => edit({ ...value, wireframe: e.target.checked })}
-          />
-          {t(L("Каркасный вид", "Wireframe view", "Қаңқалық көрініс"))}
-        </label>
-        <div className="grid gap-1">
-          {value.objects.map((o, i) => (
-            <div key={o.id} className="flex items-center gap-2">
-              <button
-                className={`${btn} flex-1 text-left ${o.id === sel ? "border-primary" : ""}`}
-                onClick={() => setSel(o.id)}
-              >
-                {o.name ||
-                  `${tx(kinds.find((k) => k.kind === o.kind)!.label)} ${i + 1}`}
-              </button>
-              <button
-                className={btn}
-                aria-label={t(
-                  L("Видимость объекта", "Object visibility", "Нысан көрінуі"),
-                )}
-                aria-pressed={!o.hidden}
-                onClick={() =>
-                  edit({
-                    ...value,
-                    objects: value.objects.map((x) =>
-                      x.id === o.id ? { ...x, hidden: !x.hidden } : x,
-                    ),
-                  })
-                }
-              >
-                {o.hidden ? "○" : "●"}
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-      {cur && (
-        <label className="mt-4 block text-xs">
-          {t(L("Имя объекта", "Object name", "Нысан атауы"))}
-          <input
-            value={cur.name ?? ""}
-            maxLength={80}
-            onFocus={begin}
-            onChange={(e) => live({ name: e.target.value })}
-            className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-2"
-          />
-        </label>
-      )}
-      {cur ? (
-        <div className="mt-4 grid gap-3 rounded-xl border border-border bg-background p-4 sm:grid-cols-2">
-          <label className={lbl}>
-            {tx("Цвет")}
-            <input
-              type="color"
-              value={cur.color}
-              onFocus={begin}
-              onChange={(e) => live({ color: e.target.value })}
-              className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-2"
-            />
-          </label>
-          <label className={lbl}>
-            {tx("Размер:")}
-            {cur.scale.toFixed(1)}
-            <input
-              type="range"
-              min={0.2}
-              max={3}
-              step={0.1}
-              value={cur.scale}
-              onPointerDown={begin}
-              onChange={(e) => live({ scale: Number(e.target.value) })}
-              className="mt-3 w-full"
-            />
-          </label>
-          <label className={lbl}>
-            {tx("Металлик:")}
-            {(cur.metal ?? 0.1).toFixed(1)}
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.1}
-              value={cur.metal ?? 0.1}
-              onPointerDown={begin}
-              onChange={(e) => live({ metal: Number(e.target.value) })}
-              className="mt-3 w-full"
-            />
-          </label>
-          <label className={lbl}>
-            {tx("Шероховатость:")}
-            {(cur.rough ?? 0.5).toFixed(1)}
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.1}
-              value={cur.rough ?? 0.5}
-              onPointerDown={begin}
-              onChange={(e) => live({ rough: Number(e.target.value) })}
-              className="mt-3 w-full"
-            />
-          </label>
-          {(["X", "Y", "Z"] as const).map((n, i) => (
-            <label key={n} className={lbl}>
-              {n}: {cur.pos[i].toFixed(1)}
-              <input
-                type="range"
-                min={-6}
-                max={6}
-                step={0.1}
-                value={cur.pos[i]}
-                onPointerDown={begin}
-                onChange={(e) =>
-                  setAxis(i as 0 | 1 | 2, Number(e.target.value))
-                }
-                className="mt-3 w-full"
-              />
-            </label>
-          ))}
-          <label className={lbl}>
-            {tx("Поворот:")}
-            {cur.rotY}°
-            <input
-              type="range"
-              min={-360}
-              max={360}
-              value={cur.rotY}
-              onPointerDown={begin}
-              onChange={(e) => live({ rotY: Number(e.target.value) })}
-              className="mt-3 w-full"
-            />
-          </label>
-          <div className="flex gap-2 sm:col-span-2">
-            <button className={btn} onClick={duplicate}>
-              <Copy size={14} />
-              {tx("Дубль")}
-            </button>
-            <button className={`${btn} text-destructive`} onClick={remove}>
-              <Trash2 size={14} />
-              {tx("Удалить")}
-            </button>
-          </div>
-        </div>
-      ) : (
-        <p className="mt-4 text-xs text-muted-foreground">
-          {tx(
-            "Добавьте фигуру и кликните по ней: появится манипулятор для перемещения, вращения и размера. Камера: мышь или палец. Клавиши: Ctrl+Z, Ctrl+Y, Ctrl+D, Delete.",
-          )}
-        </p>
-      )}
-    </div>
-  );
+import {useCallback,useEffect,useMemo,useReducer,useRef,useState,type RefObject,type KeyboardEvent} from 'react';
+import {Canvas,useThree,type ThreeEvent} from '@react-three/fiber';
+import {OrbitControls,OrthographicCamera,TransformControls} from '@react-three/drei';
+import type {OrbitControls as OrbitControlsImpl} from 'three-stdlib';
+import {Box3,BufferGeometry,Float32BufferAttribute,Mesh,Vector3,type WebGLRenderer} from 'three';
+import {Box,Copy,Download,Eye,EyeOff,Focus,LockKeyhole,MousePointer2,Move3d,Redo2,Rotate3d,Scale3d,Trash2,Undo2,Unlock} from 'lucide-react';
+import {L,useLocale} from '@/platform/locale';
+import {download} from '@/platform/client';
+import {sceneSchema,type Obj,type SceneDoc} from '@/platform/model-schema';
+import {editableGeometry,geometryFor,matrixFor,parseOBJ,sceneForExport} from './model-geometry';
+import './model-workspace.css';
+export type {Obj,SceneDoc} from '@/platform/model-schema';
+export const emptyScene:SceneDoc={bg:'#1b1b22',objects:[],light:1.6,ground:true};
+const clamp=(n:number,min:number,max:number)=>Math.max(min,Math.min(max,n)),round=(n:number)=>Math.round(n*10000)/10000,rad=Math.PI/180,btn='model-button';
+const kinds=['box','sphere','cylinder','cone','torus'] as const;
+type View='iso'|'front'|'back'|'right'|'left'|'top'|'frame';
+function Numeric({label,value,min=-10000,max=10000,step=.1,onBegin,onValue,onEnd}:{label:string;value:number;min?:number;max?:number;step?:number;onBegin:()=>void;onValue:(n:number)=>void;onEnd:()=>void}){
+ const [raw,setRaw]=useState(String(round(value))),focused=useRef(false),start=useRef(value);
+ useEffect(()=>{if(!focused.current)setRaw(String(round(value)));},[value]);
+ return <label className="model-number"><span>{label}</span><input type="number" value={raw} min={min} max={max} step={step} onFocus={()=>{focused.current=true;start.current=value;onBegin();}} onChange={e=>{setRaw(e.target.value);if(e.target.value.trim()!==''&&Number.isFinite(Number(e.target.value)))onValue(clamp(Number(e.target.value),min,max));}} onBlur={()=>{focused.current=false;setRaw(String(round(value)));onEnd();}} onKeyDown={e=>{if(e.key==='Enter')e.currentTarget.blur();if(e.key==='Escape'){e.stopPropagation();onValue(start.current);e.currentTarget.blur();}}}/></label>;
 }
+function SceneObject({object:o,selected,wireframe,onSelect,register}:{object:Obj;selected:boolean;wireframe:boolean;onSelect:(id:string)=>void;register:(id:string,mesh:Mesh|null)=>void}){
+ const geometry=useMemo(()=>geometryFor(o),[o.kind,o.segments,o.vertices,o.indices]),ref=useRef<Mesh>(null),s=o.size??[1,1,1];
+ useEffect(()=>{register(o.id,ref.current);return()=>register(o.id,null);},[o.id,register]);useEffect(()=>()=>geometry.dispose(),[geometry]);
+ return <mesh ref={ref} geometry={geometry} position={o.pos} rotation={[(o.rotX??0)*rad,o.rotY*rad,(o.rotZ??0)*rad]} scale={[s[0]*o.scale,s[1]*o.scale,s[2]*o.scale]} onClick={e=>{e.stopPropagation();onSelect(o.id);}}><meshStandardMaterial color={o.color} metalness={o.metal??.1} roughness={o.rough??.5} flatShading={o.flat??false} wireframe={wireframe} emissive={selected?'#202020':'#000000'}/></mesh>;
+}
+function CameraRig({command,objects,selected,controls}:{command:{view:View;serial:number};objects:Map<string,Mesh>;selected:string|null;controls:RefObject<OrbitControlsImpl|null>}){
+ const {camera,size,raycaster}=useThree();useEffect(()=>{raycaster.params.Points.threshold=.12;},[raycaster]);
+ useEffect(()=>{if(!controls.current)return;const bounds=new Box3(),active=selected?objects.get(selected):undefined;if(command.view==='frame'&&active){active.updateMatrixWorld(true);bounds.setFromObject(active);}else for(const mesh of objects.values()){mesh.updateMatrixWorld(true);bounds.expandByObject(mesh);}if(bounds.isEmpty())bounds.set(new Vector3(-2,0,-2),new Vector3(2,3,2));const center=bounds.getCenter(new Vector3()),radius=Math.max(.6,bounds.getSize(new Vector3()).length()/2),direction=new Vector3(1,.75,1);
+ if(command.view==='frame')direction.copy(camera.position).sub(controls.current.target);else if(command.view==='front')direction.set(0,0,1);else if(command.view==='back')direction.set(0,0,-1);else if(command.view==='right')direction.set(1,0,0);else if(command.view==='left')direction.set(-1,0,0);else if(command.view==='top')direction.set(0,1,.0001);if(direction.lengthSq()<.01)direction.set(1,.75,1);camera.position.copy(center).addScaledVector(direction.normalize(),radius*3.1);camera.near=Math.max(.001,radius/1000);camera.far=Math.max(1000,radius*100);if('isOrthographicCamera' in camera)camera.zoom=Math.min(size.width,size.height)/(radius*2.7);camera.updateProjectionMatrix();controls.current.target.copy(center);controls.current.update();
+ },[command,camera,size.width,size.height,objects,controls]);return null;
+}
+function VertexPoints({object:o,onSelect}:{object:Obj;onSelect:(i:number)=>void}){const geometry=useMemo(()=>{const g=new BufferGeometry();g.setAttribute('position',new Float32BufferAttribute(o.vertices??[],3));return g;},[o.vertices]);useEffect(()=>()=>geometry.dispose(),[geometry]);const s=o.size??[1,1,1];return <group position={o.pos} rotation={[(o.rotX??0)*rad,o.rotY*rad,(o.rotZ??0)*rad]} scale={[s[0]*o.scale,s[1]*o.scale,s[2]*o.scale]}><points geometry={geometry} renderOrder={10} onClick={(e:ThreeEvent<MouseEvent>)=>{e.stopPropagation();onSelect(e.index??0);}}><pointsMaterial color="#c6e755" size={.075} depthTest={false}/></points></group>;}
+function VertexMarker({position,register}:{position:[number,number,number];register:(m:Mesh|null)=>void}){const ref=useRef<Mesh>(null);useEffect(()=>{register(ref.current);return()=>register(null);},[register]);return <mesh ref={ref} position={position} renderOrder={20}><sphereGeometry args={[.055,12,8]}/><meshBasicMaterial color="#ffca63" depthTest={false}/></mesh>;}
+
+export function Editor3D({value,onChange}:{value:SceneDoc;onChange:(doc:SceneDoc)=>void}){
+ const {t}=useLocale(),root=useRef<HTMLDivElement>(null),current=useRef(value);current.current=value;
+ const [selected,select]=useState<string|null>(null),selectedRef=useRef(selected);selectedRef.current=selected;
+ const [mode,setMode]=useState<'translate'|'rotate'|'scale'>('translate'),[grid,setGrid]=useState(true),[snap,setSnap]=useState(false),[ortho,setOrtho]=useState(false),[command,setCommand]=useState<{view:View;serial:number}>({view:'iso',serial:0}),[error,setError]=useState(''),[exporting,setExporting]=useState(false),[vertexMode,setVertexMode]=useState(false),[vertex,setVertex]=useState(0),[selectedMesh,setSelectedMesh]=useState<Mesh|null>(null),[marker,setMarker]=useState<Mesh|null>(null);
+ const objectRefs=useRef(new Map<string,Mesh>()),gl=useRef<WebGLRenderer|null>(null),orbit=useRef<OrbitControlsImpl|null>(null),past=useRef<SceneDoc[]>([]),future=useRef<SceneDoc[]>([]),transaction=useRef<SceneDoc|null>(null),emitted=useRef(JSON.stringify(value)),[,refresh]=useReducer(n=>n+1,0);
+ const cur=value.objects.find(o=>o.id===selected)??null;
+ const name=(kind:Obj['kind'])=>t(kind==='box'?L('Куб','Box','Текше'):kind==='sphere'?L('Шар','Sphere','Шар'):kind==='cone'?L('Конус','Cone','Конус'):kind==='torus'?L('Тор','Torus','Тор'):kind==='cylinder'?L('Цилиндр','Cylinder','Цилиндр'):L('Сетка','Mesh','Торлы модель'));
+ const title=(o:Obj,i:number)=>o.name||`${name(o.kind)} ${i+1}`;
+ const register=useCallback((id:string,mesh:Mesh|null)=>{if(mesh)objectRefs.current.set(id,mesh);else objectRefs.current.delete(id);if(selectedRef.current===id)setSelectedMesh(mesh);},[]);
+ useEffect(()=>{setSelectedMesh(selected?objectRefs.current.get(selected)??null:null);if(!cur){setVertexMode(false);setVertex(0);}},[selected,cur?.id,cur?.hidden]);
+ useEffect(()=>{const incoming=JSON.stringify(value);if(incoming!==emitted.current){past.current=[];future.current=[];transaction.current=null;emitted.current=incoming;refresh();}},[value]);
+ const emit=(doc:SceneDoc)=>{emitted.current=JSON.stringify(doc);current.current=doc;onChange(doc);};
+ function checked(doc:SceneDoc){if(JSON.stringify(doc).length>200000){setError(t(L('Сцена превышает лимит 200 КБ. Уменьшите число полигонов или объектов.','Scene exceeds the 200 KB document limit. Reduce geometry or object count.','Сахна 200 КБ шегінен асты. Полигон не нысан санын азайтыңыз.')));return false;}if(!sceneSchema.safeParse(doc).success){setError(t(L('Параметры сцены выходят за допустимые пределы.','Scene values exceed supported limits.','Сахна параметрлері рұқсат етілген шектен асты.')));return false;}return true;}
+ function begin(){transaction.current??=structuredClone(current.current);}
+ function finish(){const before=transaction.current;transaction.current=null;if(before&&JSON.stringify(before)!==JSON.stringify(current.current)){past.current=[...past.current.slice(-49),before];future.current=[];refresh();}}
+ function commit(doc:SceneDoc){if(!checked(doc)||JSON.stringify(doc)===JSON.stringify(current.current))return;finish();past.current=[...past.current.slice(-49),structuredClone(current.current)];future.current=[];emit(doc);setError('');refresh();}
+ function live(change:Partial<Obj>){const doc=current.current,o=doc.objects.find(x=>x.id===selectedRef.current);if(!o||o.locked)return;const next={...doc,objects:doc.objects.map(x=>x.id===o.id?{...x,...change}:x)};if(checked(next))emit(next);}
+ function patch(change:Partial<Obj>){if(cur&&!cur.locked)commit({...current.current,objects:current.current.objects.map(o=>o.id===cur.id?{...o,...change}:o)});}
+ function undo(){finish();const previous=past.current.pop();if(previous){future.current.push(structuredClone(current.current));emit(previous);refresh();}}
+ function redo(){finish();const next=future.current.pop();if(next){past.current.push(structuredClone(current.current));emit(next);refresh();}}
+ function add(kind:typeof kinds[number]){if(current.current.objects.length>=200){setError(t(L('В сцене может быть не более 200 объектов.','A scene can contain at most 200 objects.','Сахнада ең көбі 200 нысан болуы мүмкін.')));return;}const o:Obj={id:crypto.randomUUID(),kind,name:`${name(kind)} ${current.current.objects.length+1}`,pos:[0,.8,0],rotY:0,scale:1,color:'#e8590c',metal:.1,rough:.5,segments:24};commit({...current.current,objects:[...current.current.objects,o]});select(o.id);setVertexMode(false);}
+ function duplicate(){if(!cur||cur.locked)return;const o:Obj={...structuredClone(cur),id:crypto.randomUUID(),name:`${title(cur,value.objects.indexOf(cur))} ${t(L('копия','copy','көшірме'))}`.slice(0,80),pos:[clamp(cur.pos[0]+.5,-10000,10000),cur.pos[1],cur.pos[2]]},next={...current.current,objects:[...current.current.objects,o]};if(!checked(next))return;commit(next);select(o.id);}
+ function remove(){if(cur&&!cur.locked){commit({...current.current,objects:current.current.objects.filter(o=>o.id!==cur.id)});select(null);}}
+ function view(v:View){setCommand(p=>({view:v,serial:p.serial+1}));}
+ function syncTransform(){if(cur&&selectedMesh)live({pos:selectedMesh.position.toArray().map(n=>round(clamp(n,-10000,10000))) as Obj['pos'],rotX:round(selectedMesh.rotation.x/rad),rotY:round(selectedMesh.rotation.y/rad),rotZ:round(selectedMesh.rotation.z/rad),size:selectedMesh.scale.toArray().map(n=>round(clamp(n/cur.scale,.01,100))) as NonNullable<Obj['size']>});finish();}
+ function convert(){if(!cur||cur.locked)return;const data=editableGeometry(cur),next={...current.current,objects:current.current.objects.map(o=>o.id===cur.id?{...o,...data,kind:'mesh' as const,flat:true}:o)};if(!checked(next))return;commit(next);setVertex(0);setVertexMode(true);}
+ const baseGeometry=useMemo(()=>cur?geometryFor(cur):null,[cur?.kind,cur?.segments,cur?.vertices,cur?.indices]);useEffect(()=>()=>baseGeometry?.dispose(),[baseGeometry]);
+ const base=baseGeometry?.boundingBox?.getSize(new Vector3()).toArray()??[1,1,1],count=(cur?.vertices?.length??0)/3,activeVertex=clamp(vertex,0,Math.max(0,count-1));useEffect(()=>{if(vertex!==activeVertex)setVertex(activeVertex);},[activeVertex,vertex]);
+ const worldVertex=cur?.vertices?new Vector3().fromArray(cur.vertices,activeVertex*3).applyMatrix4(matrixFor(cur)).toArray() as [number,number,number]:[0,0,0] as [number,number,number];
+ function setVertexCoordinate(axis:number,n:number){if(!cur?.vertices||cur.locked)return;const vertices=[...cur.vertices];vertices[activeVertex*3+axis]=round(clamp(n,-10000,10000));live({vertices});}
+ function syncVertex(){if(cur?.vertices&&marker){const p=marker.position.clone().applyMatrix4(matrixFor(cur).invert()),vertices=[...cur.vertices];p.toArray().forEach((n,i)=>vertices[activeVertex*3+i]=round(clamp(n,-10000,10000)));live({vertices});}finish();}
+ async function importOBJ(file?:File){if(!file)return;setError('');try{if(file.size>4_000_000)throw Error('SIZE');const data=parseOBJ(await file.text()),o:Obj={id:crypto.randomUUID(),kind:'mesh',name:file.name.replace(/\.obj$/i,'').slice(0,80),pos:[0,0,0],rotY:0,scale:1,color:'#b7b9bf',metal:0,rough:.5,...data},next={...current.current,objects:[...current.current.objects,o]};if(!checked(next))return;commit(next);select(o.id);setVertexMode(false);setTimeout(()=>view('frame'),50);}catch{setError(t(L('OBJ не импортирован. Нужны вершины и треугольные/выпуклые грани: до 4 МБ и 10 000 вершин. Текстуры и MTL не загружаются. Итоговая сцена — до 200 КБ.','OBJ import failed. Use vertices and triangle/convex faces, up to 4 MB and 10,000 vertices. Textures and MTL are not loaded. Resulting scene: up to 200 KB.','OBJ импортталмады. Төбелер мен үшбұрышты/дөңес жақтар қажет: 4 МБ және 10 000 төбеге дейін. Текстура мен MTL жүктелмейді. Дайын сахна 200 КБ дейін.')));}}
+ async function exportGeometry(format:'glb'|'obj'){setExporting(true);setError('');const scene=sceneForExport(current.current);try{if(!scene.children.length)throw Error('EMPTY');if(format==='glb'){const {GLTFExporter}=await import('three/examples/jsm/exporters/GLTFExporter.js');const data=await new GLTFExporter().parseAsync(scene,{binary:true});download('scene.glb',new Blob([data as ArrayBuffer],{type:'model/gltf-binary'}));}else{const {OBJExporter}=await import('three/examples/jsm/exporters/OBJExporter.js');download('scene.obj',new OBJExporter().parse(scene),'text/plain');}}catch{setError(t(L('Экспорт не выполнен. Добавьте видимый объект и проверьте геометрию.','Export failed. Add a visible object and check geometry.','Экспорт орындалмады. Көрінетін нысан қосып, геометрияны тексеріңіз.')));}finally{scene.traverse(o=>{if(o instanceof Mesh){o.geometry.dispose();(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose());}});setExporting(false);}}
+ function shot(){gl.current?.domElement.toBlob(blob=>{if(blob)download('scene.png',blob);else setError(t(L('Не удалось создать PNG.','Could not create PNG.','PNG жасалмады.')));});}
+ function key(e:KeyboardEvent){if((e.target as HTMLElement).closest('input,textarea,select,[contenteditable=true]'))return;const k=e.key.toLowerCase(),mod=e.ctrlKey||e.metaKey;if(mod&&k==='z'){e.preventDefault();e.shiftKey?redo():undo();}else if(mod&&k==='y'){e.preventDefault();redo();}else if(mod&&k==='d'){e.preventDefault();duplicate();}else if(k==='delete'||k==='backspace'){e.preventDefault();remove();}else if(k==='w'){setMode('translate');setVertexMode(false);}else if(k==='e'){setMode('rotate');setVertexMode(false);}else if(k==='r'){setMode('scale');setVertexMode(false);}else if(k==='f'||k==='home'){e.preventDefault();view('frame');}else if(k==='1')view('front');else if(k==='3')view('right');else if(k==='7')view('top');else if(k==='5')setOrtho(p=>!p);else if(k==='escape'){select(null);setVertexMode(false);}}

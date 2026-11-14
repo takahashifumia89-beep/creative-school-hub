@@ -1,5 +1,5 @@
 export type Text3 = readonly [string, string, string];
-export type Question = { q: Text3; options: Text3[]; answer: number };
+export type Question = { q: Text3; options: Text3[]; answer: number; explanation?: Text3 };
 export type Lesson = {
   id: string;
   title: Text3;
