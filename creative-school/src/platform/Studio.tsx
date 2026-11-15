@@ -1,3 +1,4 @@
+import { courseIndex } from "./course-index";
 import {
   lazy,
   Suspense,
@@ -550,6 +551,48 @@ export default function Studio({
             {t(L("Скачать копию", "Download backup", "Көшірмені жүктеу"))}
           </button>
         </div>
+      )}
+      {ready && draft.description && (
+        <details className="cs-studio-brief">
+          <summary>
+            {t(
+              L(
+                "Замысел работы",
+                "The idea behind this work",
+                "Жұмыстың идеясы",
+              ),
+            )}
+            <span>
+              {t(
+                L(
+                  "Задание и авторские заметки",
+                  "Brief and creator notes",
+                  "Тапсырма және автор жазбалары",
+                ),
+              )}
+            </span>
+          </summary>
+          <p>{draft.description}</p>
+          {courseIndex
+            .flatMap((c) => c.lessons.map((l) => ({ course: c.id, ...l })))
+            .filter(
+              (l) =>
+                l.id ===
+                new URLSearchParams(window.location.search).get("lesson"),
+            )
+            .map((l) => (
+              <a key={l.id} href={`/learn/${l.course}/${l.id}`}>
+                {t(
+                  L(
+                    "Вернуться к уроку",
+                    "Return to the lesson",
+                    "Сабаққа оралу",
+                  ),
+                )}{" "}
+                → {t(l.title)}
+              </a>
+            ))}
+        </details>
       )}
       <div
         className={`studio-work-area ${assistantOpen ? "has-assistant" : ""}`}

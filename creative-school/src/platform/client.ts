@@ -60,6 +60,11 @@ export const errors: Record<string, Localized> = {
     "Limit: 500 projects per account.",
     "Шектеу: бір аккаунтқа 500 жоба.",
   ),
+  TIMEOUT: L(
+    "Сервер отвечает слишком долго. Повторите запрос.",
+    "The server is taking too long. Please retry.",
+    "Сервер жауабы кешікті. Сұрауды қайталаңыз.",
+  ),
   FORBIDDEN: L(
     "Недостаточно прав.",
     "Insufficient permissions.",
@@ -81,28 +86,58 @@ export async function api<T = Record<string, unknown>>(
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<T> {
-  let res: Response;
+  const controller = new AbortController();
+  let timedOut = false;
+  const abort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  const timer =
+    method === "GET"
+      ? setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, 15000)
+      : undefined;
   try {
-    res = await fetch("/api" + path, {
-      method,
-      credentials: "same-origin",
-      headers:
-        body === undefined ? undefined : { "Content-Type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal,
-    });
-  } catch (e) {
-    if (signal?.aborted) throw e;
-    throw new ApiError("NETWORK", 0);
+    let res: Response;
+    try {
+      res = await fetch("/api" + path, {
+        method,
+        credentials: "same-origin",
+        headers:
+          body === undefined
+            ? undefined
+            : { "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      throw new ApiError(timedOut ? "TIMEOUT" : "NETWORK", 0);
+    }
+    let payload: any;
+    try {
+      payload = await res.json();
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      if (timedOut) throw new ApiError("TIMEOUT", 0);
+      throw new ApiError(
+        res.status === 401 ? "UNAUTHORIZED" : "SERVER_ERROR",
+        res.status || 502,
+      );
+    }
+    if (!res.ok) {
+      if (payload?.error === "UNAUTHORIZED" && path !== "/me")
+        window.dispatchEvent(new Event("cs-session-expired"));
+      throw new ApiError(payload?.error ?? "SERVER_ERROR", res.status, payload);
+    }
+    return payload;
+  } finally {
+    if (timer) clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
   }
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    if (payload.error === "UNAUTHORIZED" && path !== "/me")
-      window.dispatchEvent(new Event("cs-session-expired"));
-    throw new ApiError(payload.error ?? "SERVER_ERROR", res.status, payload);
-  }
-  return payload;
 }
+
 export function message(e: unknown): Localized {
   return (
     errors[e instanceof ApiError ? e.code : "SERVER_ERROR"] ??

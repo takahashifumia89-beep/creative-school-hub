@@ -232,6 +232,21 @@ test("a user publishes a service and buyers send requests through the marketplac
     .fill(
       "Нужен короткий ролик о нашей школе, с аккуратными титрами и спокойным монтажом.",
     );
+  await form.locator(".cs-creative-brief summary").click();
+  await form
+    .getByLabel("Для кого и зачем?", { exact: true })
+    .fill("Для будущих учеников: показать атмосферу школы.");
+  await form
+    .getByLabel("Желаемый срок", { exact: true })
+    .fill("В течение двух недель");
+  await form
+    .getByRole("button", { name: "Добавить ответы в задачу", exact: true })
+    .click();
+  await expect(
+    form.getByLabel("Опишите задачу — от 30 символов", { exact: true }),
+  ).toHaveValue(
+    /Нужен короткий ролик[\s\S]*Для будущих учеников[\s\S]*В течение двух недель/,
+  );
   await form
     .getByLabel("Контакт для исполнителя", { exact: true })
     .fill("buyer@example.test");
@@ -239,6 +254,7 @@ test("a user publishes a service and buyers send requests through the marketplac
     .getByRole("button", { name: "Отправить заявку", exact: true })
     .click();
   await expect(page.locator(".sm-order")).toContainText("Ожидает ответа");
+  await expect(page.locator(".sm-order")).toContainText("Для будущих учеников");
   await page.getByRole("button", { name: "Услуги", exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator("[data-workspace-sidebar]")).not.toBeInViewport();

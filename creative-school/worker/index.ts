@@ -1,7 +1,13 @@
+import { workspaceIndex } from "./workspace";
 import { serviceRoute } from "./services";
 import { ensureSchema } from "./schema";
 import { curriculum, lessonMap } from "../src/platform/curriculum";
-import { kinds, validDocument, type ProjectKind } from "../src/platform/schema";
+import {
+  designSchema,
+  kinds,
+  validDocument,
+  type ProjectKind,
+} from "../src/platform/schema";
 import {
   assistantRequestSchema,
   assistantDailyLimit,
@@ -370,11 +376,30 @@ async function route(req: Request, env: Env): Promise<Response> {
       if (!p) return fail("NOT_FOUND", 404);
       const projects = await db
         .prepare(
-          `SELECT ${projectCols},content FROM projects WHERE owner_id=? AND status='published' AND visibility='public' ORDER BY updated_at DESC LIMIT 100`,
+          `SELECT ${projectCols},content FROM projects WHERE owner_id=? AND status='published' AND visibility='public' ORDER BY updated_at DESC,id LIMIT 24 OFFSET ?`,
+        )
+        .bind(
+          publicMatch[2],
+          Math.min(
+            500,
+            Math.max(
+              0,
+              Math.floor(Number(url.searchParams.get("offset")) || 0),
+            ),
+          ),
+        )
+        .all();
+      const count = await db
+        .prepare(
+          "SELECT COUNT(*) n FROM projects WHERE owner_id=? AND status='published' AND visibility='public'",
         )
         .bind(publicMatch[2])
-        .all();
-      return json({ profile: p, projects: projects.results });
+        .first<{ n: number }>();
+      return json({
+        profile: p,
+        projects: projects.results,
+        total: count?.n ?? 0,
+      });
     }
     const p = await db
       .prepare(
@@ -384,6 +409,14 @@ async function route(req: Request, env: Env): Promise<Response> {
       .first();
     return p ? json(p) : fail("NOT_FOUND", 404);
   }
+  if (path === "/api/workspace-index" && method === "GET")
+    return json(
+      await workspaceIndex(
+        db,
+        user ? String(user.id) : null,
+        url.searchParams.get("services") === "1",
+      ),
+    );
   if (path === "/api/services" && method === "GET")
     return (await serviceRoute(db, path, method, b, null))!;
   if (!user) return fail("UNAUTHORIZED", 401);
@@ -605,6 +638,33 @@ async function route(req: Request, env: Env): Promise<Response> {
       .bind(id, uid)
       .first();
     return project ? json(project, 201) : fail("CONFLICT", 409);
+  }
+  const previewMatch = path.match(/^\/api\/projects\/([\w-]+)\/preview$/);
+  if (previewMatch && method === "GET") {
+    const p = await db
+      .prepare("SELECT kind,content FROM projects WHERE id=? AND owner_id=?")
+      .bind(previewMatch[1], uid)
+      .first<{ kind: string; content: string | null }>();
+    if (!p) return fail("NOT_FOUND", 404);
+    if (p.kind !== "design" || !p.content) return json({ preview: null });
+    try {
+      const document = designSchema.safeParse(JSON.parse(p.content));
+      return json({
+        preview: document.success
+          ? {
+              ...document.data,
+              shapes: document.data.shapes
+                .filter((s) => !s.hidden)
+                .map((s) => ({
+                  ...s,
+                  ...(s.text ? { text: s.text.slice(0, 500) } : {}),
+                })),
+            }
+          : null,
+      });
+    } catch {
+      return json({ preview: null });
+    }
   }
   const pm = path.match(/^\/api\/projects\/([\w-]+)$/);
   if (pm) {

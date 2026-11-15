@@ -85,8 +85,12 @@ export async function getCurrentUser(): Promise<AuthResult> {
   const r = await result<{ user: User }>("/me");
   return { user: r.data?.user ?? null, error: r.error };
 }
-export function authChanged() {
-  window.dispatchEvent(new Event("creative-school-auth-change"));
+export function authChanged(user?: User | null) {
+  window.dispatchEvent(
+    user === undefined
+      ? new Event("creative-school-auth-change")
+      : new CustomEvent("creative-school-auth-change", { detail: user }),
+  );
 }
 export async function signInWithPassword(
   email: string,
@@ -96,7 +100,7 @@ export async function signInWithPassword(
     email,
     password,
   });
-  if (r.data) authChanged();
+  if (r.data) authChanged(r.data.user);
   return { user: r.data?.user ?? null, error: r.error };
 }
 export async function signUpWithPassword(
@@ -109,7 +113,7 @@ export async function signUpWithPassword(
     "POST",
     { email, password, displayName },
   );
-  if (r.data) authChanged();
+  if (r.data) authChanged(r.data.user);
   return {
     user: r.data?.user ?? null,
     error: r.error,
@@ -118,7 +122,7 @@ export async function signUpWithPassword(
 }
 export async function signOut() {
   const r = await result("/auth/signout", "POST", {});
-  if (!r.error) authChanged();
+  if (!r.error) authChanged(null);
   return r.error;
 }
 export function onAuthChange(callback: (user: LocalUser | null) => void) {

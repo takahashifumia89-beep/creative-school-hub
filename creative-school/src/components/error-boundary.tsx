@@ -39,9 +39,9 @@ function toError(value: unknown): Error {
 function DefaultFallback({ error, resetError }: ErrorFallbackProps) {
   const { t } = useLocale();
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-gray-50 p-6">
+    <div className="min-h-[50dvh] w-full flex items-center justify-center bg-background p-6">
       <div className="max-w-lg w-full text-center">
-        <h1 className="text-xl font-semibold text-gray-900">
+        <h1 className="text-xl font-semibold text-foreground">
           {t(
             L(
               "Не удалось открыть этот раздел",
@@ -50,7 +50,7 @@ function DefaultFallback({ error, resetError }: ErrorFallbackProps) {
             ),
           )}
         </h1>
-        <p className="mt-2 text-sm text-gray-600">
+        <p className="mt-2 text-sm text-muted-foreground">
           {t(
             L(
               "Ваши сохранённые проекты остаются в аккаунте. Повторите попытку.",
@@ -67,7 +67,15 @@ function DefaultFallback({ error, resetError }: ErrorFallbackProps) {
         ) : null}
         <button
           type="button"
-          onClick={resetError}
+          onClick={() => {
+            if (
+              /chunk|dynamically imported module|module script/i.test(
+                error.message,
+              )
+            )
+              window.location.reload();
+            else resetError();
+          }}
           className="mt-4 rounded bg-gray-900 px-4 py-2 text-sm text-white hover:bg-gray-700"
         >
           {t(L("Повторить", "Retry", "Қайталау"))}

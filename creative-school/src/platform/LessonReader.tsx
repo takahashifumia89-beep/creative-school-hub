@@ -1,3 +1,4 @@
+import { PracticeLaunch } from "./PracticeLaunch";
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { lessonMaterials } from "./lesson-materials";
@@ -222,6 +223,12 @@ export function LessonReader({
             </ul>
           </>
         )}
+        <PracticeLaunch
+          userId={userId}
+          lessonId={lesson.id}
+          title={t(lesson.title)}
+          brief={m ? t(m.practice.brief) : t(lesson.task)}
+        />
         <label className="lesson-reviewed">
           <input
             type="checkbox"

@@ -1,55 +1,29 @@
-import { type ReactNode, useEffect, useState } from "react";
-import { useLocation } from "wouter";
-import { getCurrentUser, onAuthChange } from "@/lib/api";
-import { api, ApiError, message } from "@/platform/client";
+import { useEffect, type ReactNode } from "react";
+import { Link, useLocation } from "wouter";
+import { useSession } from "@/platform/session";
 import { L, useLocale } from "@/platform/locale";
+import { safeReturnPath } from "@/platform/navigation";
+import { PageLoading } from "@/platform/PageLoading";
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { t } = useLocale(),
-    [, navigate] = useLocation(),
-    [allowed, setAllowed] = useState<boolean | null>(null),
-    [error, setError] = useState("");
-  async function load() {
-    setError("");
-    try {
-      await api("/me");
-      setAllowed(true);
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 401) {
-        setAllowed(false);
-        navigate("/auth");
-      } else setError(t(message(e)));
-    }
-  }
+  const { user, loading, error, refresh } = useSession(),
+    { t } = useLocale(),
+    [, navigate] = useLocation();
   useEffect(() => {
-    void load();
-    return onAuthChange((user) => {
-      setAllowed(!!user);
-      if (!user) navigate("/auth");
-    });
-  }, []);
+    if (!loading && !user && !error)
+      navigate(
+        `/auth?next=${encodeURIComponent(safeReturnPath(window.location.pathname + window.location.search))}`,
+      );
+  }, [user, loading, error, navigate]);
+  if (user) return <>{children}</>;
   if (error)
     return (
-      <div className="p-8 text-sm" role="alert">
-        {error}
-        <button
-          onClick={() => void load()}
-          className="ml-3 rounded-full border border-border px-4 py-2"
-        >
+      <div className="cs-inline-error" role="alert">
+        {t(error)}
+        <button onClick={() => void refresh()}>
           {t(L("Повторить", "Retry", "Қайталау"))}
         </button>
+        <Link href="/">{t(L("На главную", "Home", "Басты бетке"))}</Link>
       </div>
     );
-  if (allowed === null)
-    return (
-      <div className="grid min-h-[100dvh] place-items-center bg-background text-sm text-muted-foreground">
-        {t(
-          L(
-            "Загружаем рабочее пространство…",
-            "Loading your workspace…",
-            "Жұмыс кеңістігі жүктелуде…",
-          ),
-        )}
-      </div>
-    );
-  return allowed ? <>{children}</> : null;
+  return <PageLoading />;
 }

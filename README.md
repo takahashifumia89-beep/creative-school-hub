@@ -2,6 +2,9 @@
 
 A trilingual creative learning workspace with React, TypeScript, Vite, Cloudflare Workers and D1/SQLite. The application lives in [`creative-school/`](creative-school/).
 
+- Spark: a live poster workshop with three compositions, six palettes, editable type, shareable variations and authored creative briefs. Open any variation as a private project with real editable layers.
+- A connected creative journey: lesson-linked practice projects, briefs inside the studio, actual design previews, author case stories in portfolios and guided service requests. [How it works](creative-school/docs/CREATIVE_JOURNEY.md).
+- Global keyboard search, a personal overview, a searchable project library with copying/archive/restore, shared session loading and self-hosted fonts.
 - 8 learning paths / 32 substantive lessons with worked examples, practice, self-review, 96 questions with explanations and 30 linked sources in Russian, English and Kazakh. Account-scoped notes, reading downloads and offline quiz queues are included. Existing extended Russian reading is preserved as an optional appendix.
 - Design workbench: 27 editable shape/text types including hearts, speech bubbles, adjustable stars and custom polygons; gradient fills and stroke patterns; zoom/pan, multi-selection, snapping, precise transforms, layers, multiline typography, templates, transactional undo/redo and PNG/SVG/JSON exports.
 - 3D workbench: hierarchy, precise transforms, PBR materials, camera views, editable mesh vertices, safe OBJ import and OBJ/GLB/PNG/JSON exports.
@@ -40,7 +43,7 @@ Browser tests use a separate disposable local D1 database at `.wrangler/e2e-stat
 
 ## Deploy an existing installation
 
-The original landing page, navigation, dashboard and card styling are preserved. New tools use the same theme tokens.
+The cream, lime and charcoal visual identity is retained across the interactive landing, workspace, lessons, studios and portfolio. New tools use the same theme tokens.
 
 Cloudflare can build from either the repository root or `creative-school/`; both have a Wrangler configuration targeting the same existing D1 database. Node 22 is pinned in both locations. At the root, `npm run build` installs the nested lockfile and builds the app. In `creative-school/`, use `npm ci && npm run build`.
 
@@ -53,3 +56,5 @@ See [the architecture and limits](creative-school/docs/PLATFORM.md) for supporte
 Course references and access notes are listed in [SOURCES.md](creative-school/docs/SOURCES.md). Lesson explanations and examples are original teaching material; linked external articles and videos retain their publishers' terms.
 
 Editor engine details: [worker processing, precision controls, animation and modifier stacks](creative-school/docs/EDITOR_ENGINE.md).
+
+Hosting address: [using the free Cloudflare `workers.dev` address or attaching a registered domain](creative-school/docs/FREE_ADDRESS.md).
