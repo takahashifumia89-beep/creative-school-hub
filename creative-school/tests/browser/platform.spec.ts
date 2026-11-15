@@ -423,7 +423,7 @@ test("offline quiz queue syncs and stays isolated between accounts", async ({
   ).toEqual([]);
 });
 
-test("original landing composition and account sign-out remain functional", async ({
+test("landing has a live poster and account sign-out remains functional", async ({
   page,
   request,
 }) => {
@@ -431,7 +431,7 @@ test("original landing composition and account sign-out remain functional", asyn
   await expect(page.locator("h1")).toContainText("Место для");
   await expect(page.locator("h1")).toHaveClass(/font-display/);
   await expect(
-    page.getByText("Практика, а не бесконечная лента.", { exact: true }),
+    page.getByRole("img", { name: "Интерактивный постер", exact: true }),
   ).toBeVisible();
   const a = await account(request);
   await page.context().addCookies([
@@ -492,16 +492,14 @@ test("design workbench supports precise history, locked layers and focus mode", 
   request,
 }) => {
   const a = await account(request);
-  await page
-    .context()
-    .addCookies([
-      {
-        name: "cs_session",
-        value: a.headers.Cookie.split("=")[1],
-        domain: "localhost",
-        path: "/",
-      },
-    ]);
+  await page.context().addCookies([
+    {
+      name: "cs_session",
+      value: a.headers.Cookie.split("=")[1],
+      domain: "localhost",
+      path: "/",
+    },
+  ]);
   await page.goto("/studio/design");
   await page.getByLabel("Название", { exact: true }).fill("Precise design");
   await page
@@ -540,16 +538,14 @@ test("model workbench converts geometry and persists numeric vertex edits", asyn
   request,
 }) => {
   const a = await account(request);
-  await page
-    .context()
-    .addCookies([
-      {
-        name: "cs_session",
-        value: a.headers.Cookie.split("=")[1],
-        domain: "localhost",
-        path: "/",
-      },
-    ]);
+  await page.context().addCookies([
+    {
+      name: "cs_session",
+      value: a.headers.Cookie.split("=")[1],
+      domain: "localhost",
+      path: "/",
+    },
+  ]);
   await page.goto("/studio/3d");
   await page.getByLabel("Название", { exact: true }).fill("Editable mesh");
   await page.getByRole("button", { name: "+ Куб", exact: true }).click();

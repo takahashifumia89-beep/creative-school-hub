@@ -17,14 +17,17 @@ let activeLanguage: Lang = "ru";
 export function currentLang() {
   return activeLanguage;
 }
-const Locale = createContext<Lang>("ru");
+const Locale = createContext<{ lang: Lang; setLang: (lang: Lang) => void }>({
+  lang: "ru",
+  setLang: () => {},
+});
 export function useLocale() {
-  const lang = useContext(Locale);
+  const { lang, setLang } = useContext(Locale);
   const t = useCallback(
     (s: Localized) => s[lang === "ru" ? 0 : lang === "en" ? 1 : 2],
     [lang],
   );
-  return { lang, t };
+  return { lang, t, setLang };
 }
 export function LocaleProvider({ children }: { children: ReactNode }) {
   const [lang, setLang] = useState<Lang>(() => {
@@ -45,15 +48,28 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     }
   }, [lang]);
   return (
-    <Locale.Provider value={lang}>
-      {children}
-      <div className="language" role="group" aria-label="Language">
-        {(["ru", "en", "kk"] as const).map((l) => (
-          <button key={l} aria-pressed={l === lang} onClick={() => setLang(l)}>
-            {l === "kk" ? "ҚАЗ" : l.toUpperCase()}
-          </button>
-        ))}
-      </div>
-    </Locale.Provider>
+    <Locale.Provider value={{ lang, setLang }}>{children}</Locale.Provider>
+  );
+}
+export function LanguageSwitcher() {
+  const { lang, setLang } = useLocale();
+  return (
+    <div
+      className="language language-inline"
+      role="group"
+      aria-label="Language"
+    >
+      {(["ru", "en", "kk"] as const).map((l) => (
+        <button
+          key={l}
+          lang={l}
+          title={l === "ru" ? "Русский" : l === "en" ? "English" : "Қазақша"}
+          aria-pressed={l === lang}
+          onClick={() => setLang(l)}
+        >
+          {l === "kk" ? "ҚАЗ" : l.toUpperCase()}
+        </button>
+      ))}
+    </div>
   );
 }

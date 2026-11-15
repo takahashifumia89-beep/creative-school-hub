@@ -1,3 +1,5 @@
+import { LanguageSwitcher } from "@/platform/locale";
+import { safeReturnPath } from "@/platform/navigation";
 import { useCopy } from "@/platform/copy";
 import { useState } from "react";
 import { ArrowRight, Check, LoaderCircle } from "lucide-react";
@@ -30,7 +32,9 @@ export function OnboardingPage({
       return;
     }
     onToast(tx("Ваше пространство готово."));
-    setLocation("/dashboard");
+    setLocation(
+      safeReturnPath(new URLSearchParams(window.location.search).get("next")),
+    );
   }
   const options = [
     tx("Визуальный дизайн"),
@@ -49,6 +53,7 @@ export function OnboardingPage({
     <div className="paper-grid min-h-[100dvh] bg-background px-5 py-6 sm:px-10">
       <header className="flex items-center justify-between">
         <Logo />
+        <LanguageSwitcher />
         <Link
           href="/auth"
           className="font-mono-ui text-[10px] uppercase tracking-widest text-muted-foreground hover:text-primary"

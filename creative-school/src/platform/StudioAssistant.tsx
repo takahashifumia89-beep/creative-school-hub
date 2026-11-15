@@ -1,3 +1,4 @@
+import { AssistantReply as ReplyContent } from "./AssistantReply";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import {
@@ -10,6 +11,8 @@ import {
   Download,
   RefreshCw,
   ArrowUpRight,
+  Expand,
+  Minimize,
 } from "lucide-react";
 import { api, ApiError, download, message } from "./client";
 import { L, useLocale, type Localized } from "./locale";
@@ -277,7 +280,8 @@ export default function StudioAssistant({
     [statusError, setStatusError] = useState(""),
     [error, setError] = useState(""),
     [notice, setNotice] = useState<Localized | null>(null),
-    [online, setOnline] = useState(navigator.onLine);
+    [online, setOnline] = useState(navigator.onLine),
+    [expanded, setExpanded] = useState(false);
   const request = useRef<AbortController | null>(null),
     statusRequest = useRef<AbortController | null>(null),
     textarea = useRef<HTMLTextAreaElement>(null),
@@ -425,7 +429,7 @@ export default function StudioAssistant({
   return (
     <aside
       id="studio-assistant-panel"
-      className="studio-assistant"
+      className={`studio-assistant ${expanded ? "is-expanded" : ""}`}
       aria-label={t(copy.title)}
       hidden={!open}
       onKeyDown={(e) => {
@@ -451,6 +455,26 @@ export default function StudioAssistant({
             )}
           </p>
         </div>
+        <button
+          className="sa-icon"
+          onClick={() => setExpanded((value) => !value)}
+          aria-label={t(
+            expanded
+              ? L(
+                  "Свернуть помощника",
+                  "Compact assistant",
+                  "Көмекшіні ықшамдау",
+                )
+              : L(
+                  "Развернуть помощника",
+                  "Expand assistant",
+                  "Көмекшіні кеңейту",
+                ),
+          )}
+          aria-expanded={expanded}
+        >
+          {expanded ? <Minimize size={15} /> : <Expand size={15} />}
+        </button>
         <button
           className="sa-icon"
           onClick={onClose}
@@ -533,7 +557,11 @@ export default function StudioAssistant({
             <span className="sa-message-label">
               {m.role === "user" ? t(L("Вы", "You", "Сіз")) : t(copy.title)}
             </span>
-            <p>{m.content}</p>
+            {m.role === "assistant" ? (
+              <ReplyContent text={m.content} />
+            ) : (
+              <p>{m.content}</p>
+            )}
             {m.context && (
               <small>
                 {t(
@@ -674,7 +702,7 @@ export default function StudioAssistant({
             id="sa-question"
             value={question}
             maxLength={2000}
-            rows={3}
+            rows={2}
             disabled={busy}
             placeholder={t(
               L(
@@ -721,15 +749,26 @@ export default function StudioAssistant({
             )}
           </div>
         </form>
-        <p className="sa-privacy">
-          {t(
-            L(
-              "Бесплатная дневная квота · Cloudflare AI. Вопрос и до 6 последних сообщений обрабатываются Cloudflare. Фото, видео и файлы не передаются. ИИ может ошибаться.",
-              "Free daily allowance · Cloudflare AI. Cloudflare processes your question and up to 6 recent messages. Photos, videos and files are not sent. AI can make mistakes.",
-              "Тегін күндік квота · Cloudflare AI. Сұрақ пен соңғы 6 хабарламаға дейін Cloudflare өңдейді. Фото, видео мен файлдар жіберілмейді. ЖИ қателесуі мүмкін.",
-            ),
-          )}
-        </p>
+        <details className="sa-data-info">
+          <summary>
+            {t(
+              L(
+                "Данные и бесплатный лимит",
+                "Data and free allowance",
+                "Деректер мен тегін лимит",
+              ),
+            )}
+          </summary>
+          <p className="sa-privacy">
+            {t(
+              L(
+                "Бесплатная дневная квота · Cloudflare AI. Вопрос и до 6 последних сообщений обрабатываются Cloudflare. Фото, видео и файлы не передаются. ИИ может ошибаться.",
+                "Free daily allowance · Cloudflare AI. Cloudflare processes your question and up to 6 recent messages. Photos, videos and files are not sent. AI can make mistakes.",
+                "Тегін күндік квота · Cloudflare AI. Сұрақ пен соңғы 6 хабарламаға дейін Cloudflare өңдейді. Фото, видео мен файлдар жіберілмейді. ЖИ қателесуі мүмкін.",
+              ),
+            )}
+          </p>
+        </details>
         <Link className="sa-course" href={courses[kind].href}>
           {t(courses[kind].label)} <ArrowUpRight size={12} aria-hidden="true" />
         </Link>

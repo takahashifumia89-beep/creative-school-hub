@@ -1,4 +1,4 @@
-import { useEffect, useState, useId } from "react";
+import { useEffect, useState, useId, useRef } from "react";
 import { Link } from "wouter";
 import { api, download, message, type Project, type User } from "./client";
 import { L, useLocale } from "./locale";
@@ -195,18 +195,72 @@ export function PublicPage({
     [data, setData] = useState<{
       profile?: { display_name: string; bio: string };
       projects: Project[];
+      total?: number;
     } | null>(null),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [moreError, setMoreError] = useState(""),
+    [loadingMore, setLoadingMore] = useState(false);
+  const request = useRef<AbortController | null>(null),
+    generation = useRef(0);
   useEffect(() => {
+    const seq = ++generation.current,
+      controller = new AbortController();
+    request.current = controller;
     setData(null);
+    setMoreError("");
+    setLoadingMore(false);
     setError("");
     void api<
       | Project
       | { profile: { display_name: string; bio: string }; projects: Project[] }
-    >(`/public/${kind}/${id}`)
-      .then((r) => setData("projects" in r ? r : { projects: [r] }))
-      .catch((e) => setError(t(message(e))));
+    >(`/public/${kind}/${id}`, "GET", undefined, controller.signal)
+      .then((r) => {
+        if (seq === generation.current)
+          setData("projects" in r ? r : { projects: [r] });
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted && seq === generation.current)
+          setError(t(message(e)));
+      });
+    return () => {
+      generation.current++;
+      controller.abort();
+    };
   }, [id, kind]);
+  async function loadMore() {
+    if (!data || loadingMore || kind !== "profiles") return;
+    const seq = generation.current;
+    setLoadingMore(true);
+    setMoreError("");
+    try {
+      const next = await api<{ projects: Project[]; total: number }>(
+        `/public/profiles/${id}?offset=${data.projects.length}`,
+        "GET",
+        undefined,
+        request.current?.signal,
+      );
+      if (seq === generation.current)
+        setData((current) =>
+          current
+            ? {
+                ...current,
+                total: next.total,
+                projects: [
+                  ...current.projects,
+                  ...next.projects.filter(
+                    (p) => !current.projects.some((x) => x.id === p.id),
+                  ),
+                ],
+              }
+            : current,
+        );
+    } catch (e) {
+      if (seq === generation.current && !request.current?.signal.aborted)
+        setMoreError(t(message(e)));
+    } finally {
+      if (seq === generation.current) setLoadingMore(false);
+    }
+  }
   return (
     <section>
       <p className="eyebrow">CREATIVE SCHOOL / PORTFOLIO</p>
@@ -220,14 +274,31 @@ export function PublicPage({
         <>
           <h1>{data.profile?.display_name ?? data.projects[0]?.title}</h1>
           <p>{data.profile?.bio}</p>
-          <div className="grid3">
+          <div
+            className={
+              kind === "projects" ? "cs-public-case" : "grid3 cs-public-gallery"
+            }
+          >
             {data.projects.map((p) => (
               <article className="card" key={p.id}>
                 <Preview project={p} />
                 <h2>
                   <Link href={`/p/${p.id}`}>{p.title}</Link>
                 </h2>
-                <p>{p.description}</p>
+                {p.description && (
+                  <div className="cs-public-story">
+                    <span className="eyebrow">
+                      {t(
+                        L(
+                          "Слова автора",
+                          "In the creator’s words",
+                          "Автор сөзі",
+                        ),
+                      )}
+                    </span>
+                    <p>{p.description}</p>
+                  </div>
+                )}
                 <p>{p.kind.toUpperCase()}</p>
                 <button
                   onClick={() =>
@@ -252,6 +323,24 @@ export function PublicPage({
               </article>
             ))}
           </div>
+          {moreError && (
+            <p className="error" role="alert">
+              {moreError}
+            </p>
+          )}
+          {(data.total ?? 0) > data.projects.length && (
+            <button
+              className="cs-action cs-load-more"
+              disabled={loadingMore}
+              onClick={() => void loadMore()}
+            >
+              {t(
+                loadingMore
+                  ? L("Загружаем…", "Loading…", "Жүктелуде…")
+                  : L("Показать ещё", "Show more", "Тағы көрсету"),
+              )}
+            </button>
+          )}
           {!data.projects.length && (
             <p>
               {t(

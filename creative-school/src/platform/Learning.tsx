@@ -1,3 +1,4 @@
+import { rememberLesson } from "./resume";
 import { LessonReader as LessonContent } from "./LessonReader";
 import {
   feedbackSchema,
@@ -34,6 +35,9 @@ export default function Learning({
   const key = `cs-progress-queue:${user.id}`;
   const course = curriculum.find((c) => c.id === courseId),
     lesson = course?.lessons.find((l) => l.id === lessonId);
+  useEffect(() => {
+    if (lesson) rememberLesson(user.id, lesson.id);
+  }, [user.id, lesson?.id]);
   const read = (): Pending[] => {
     try {
       const v = JSON.parse(localStorage.getItem(key) ?? "[]");

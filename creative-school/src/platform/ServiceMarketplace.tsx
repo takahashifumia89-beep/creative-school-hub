@@ -1,5 +1,6 @@
+import { CreativeBrief } from "./CreativeBrief";
 import { useEffect, useRef, useState } from "react";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 import {
   Palette,
   Video,
@@ -81,6 +82,7 @@ const empty: Draft = {
 };
 export default function ServiceMarketplace() {
   const { t, lang } = useLocale();
+  const urlSearch = useSearch();
   const [user, setUser] = useState<User | null>(null),
     [offers, setOffers] = useState<ServiceOffer[]>([]),
     [mine, setMine] = useState<ServiceOffer[]>([]),
@@ -92,7 +94,9 @@ export default function ServiceMarketplace() {
         : "catalog";
     }),
     [filter, setFilter] = useState("all"),
-    [search, setSearch] = useState(""),
+    [search, setSearch] = useState(
+      new URLSearchParams(window.location.search).get("q")?.slice(0, 120) ?? "",
+    ),
     [sort, setSort] = useState("recent"),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
@@ -104,6 +108,10 @@ export default function ServiceMarketplace() {
     [contact, setContact] = useState(""),
     [notice, setNotice] = useState(""),
     [delivery, setDelivery] = useState<Record<string, string>>({});
+  useEffect(() => {
+    setSearch(new URLSearchParams(urlSearch).get("q")?.slice(0, 120) ?? "");
+    if (new URLSearchParams(urlSearch).has("q")) setTab("catalog");
+  }, [urlSearch]);
   const generation = useRef(0),
     orderId = useRef(crypto.randomUUID()),
     form = useRef<HTMLElement>(null);
@@ -330,6 +338,38 @@ export default function ServiceMarketplace() {
           </Link>
         )}
       </header>
+      <div className="cs-service-journey">
+        {[
+          L("01 / Ваша идея", "01 / Your idea", "01 / Сіздің идеяңыз"),
+          L("02 / Общий замысел", "02 / A shared direction", "02 / Ортақ ой"),
+          L("03 / Готовая работа", "03 / Finished work", "03 / Дайын жұмыс"),
+        ].map((label, i) => (
+          <div key={i}>
+            <strong>{t(label)}</strong>
+            <p>
+              {t(
+                [
+                  L(
+                    "Расскажите о задаче, настроении и желаемом результате.",
+                    "Describe the task, mood and result you want.",
+                    "Тапсырма, көңіл күй және қалаған нәтиже туралы айтыңыз.",
+                  ),
+                  L(
+                    "Согласуйте объём и условия с выбранным автором.",
+                    "Agree on scope and terms with the creator you choose.",
+                    "Таңдаған автормен көлем мен шарттарды келісіңіз.",
+                  ),
+                  L(
+                    "Получите результат, проверьте и подтвердите выполнение.",
+                    "Receive the work, review it and confirm completion.",
+                    "Нәтижені алып, тексеріңіз және орындалуын растаңыз.",
+                  ),
+                ][i],
+              )}
+            </p>
+          </div>
+        ))}
+      </div>
       <div className="sm-notice">
         {t(
           L(
@@ -531,6 +571,11 @@ export default function ServiceMarketplace() {
                 )}{" "}
                 ↗
               </Link>
+              <CreativeBrief
+                key={selected!.id}
+                value={brief}
+                onChange={setBrief}
+              />
               <label>
                 {t(
                   L(
@@ -542,6 +587,13 @@ export default function ServiceMarketplace() {
                 <textarea
                   required
                   minLength={30}
+                  aria-label={t(
+                    L(
+                      "Опишите задачу — от 30 символов",
+                      "Describe your task — at least 30 characters",
+                      "Тапсырманы сипаттаңыз — кемінде 30 таңба",
+                    ),
+                  )}
                   maxLength={4000}
                   rows={5}
                   value={brief}

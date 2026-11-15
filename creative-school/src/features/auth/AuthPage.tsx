@@ -1,3 +1,5 @@
+import { LanguageSwitcher } from "@/platform/locale";
+import { safeReturnPath } from "@/platform/navigation";
 import { useCopy } from "@/platform/copy";
 import { useState } from "react";
 import { ArrowRight, LoaderCircle } from "lucide-react";
@@ -44,7 +46,9 @@ export function AuthPage({ onToast }: { onToast: (s: string) => void }) {
         return;
       }
       onToast(tx("С возвращением!"));
-      setLocation("/dashboard");
+      setLocation(
+        safeReturnPath(new URLSearchParams(window.location.search).get("next")),
+      );
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -53,7 +57,8 @@ export function AuthPage({ onToast }: { onToast: (s: string) => void }) {
   }
   return (
     <div className="paper-grid min-h-[100dvh] bg-background px-5 py-6 sm:px-10">
-      <header className="flex items-center justify-between">
+      <header className="flex flex-wrap items-center justify-between gap-4">
+        <LanguageSwitcher />
         <Logo />
         <Link
           href="/"
@@ -110,7 +115,10 @@ export function AuthPage({ onToast }: { onToast: (s: string) => void }) {
                   if (mode === "recover") {
                     setMode("in");
                     setPassword("");
-                  } else setLocation("/onboarding");
+                  } else
+                    setLocation(
+                      `/onboarding?next=${encodeURIComponent(safeReturnPath(new URLSearchParams(window.location.search).get("next")))}`,
+                    );
                 }}
                 className="ml-2 rounded-full bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground"
               >

@@ -5,6 +5,7 @@ export const copy: Record<string, Localized> = {
     "Workspace",
     "Жұмыс кеңістігі",
   ],
+  Искра: ["Искра", "Spark", "Ұшқын"],
   Обзор: ["Обзор", "Overview", "Шолу"],
   Обучение: ["Обучение", "Learning", "Оқу"],
   Проекты: ["Проекты", "Projects", "Жобалар"],
