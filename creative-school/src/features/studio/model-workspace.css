@@ -557,3 +557,25 @@
   min-height: 22px;
   padding: 0 4px;
 }
+.model-workbench .model-number > .precision-label {
+  display: flex;
+  white-space: normal;
+  overflow: visible;
+  align-items: center;
+  min-width: 0;
+}
+.model-workbench .precision-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 520px) {
+  .model-workbench .model-inspector {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .model-workbench .model-property-group {
+    width: 100%;
+  }
+  .model-workbench .model-number-grid {
+    gap: 8px;
+  }
+}
