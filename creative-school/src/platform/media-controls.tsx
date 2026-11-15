@@ -1,3 +1,5 @@
+import { PrecisionNumber } from "./PrecisionNumber";
+import { useLocale } from "./locale";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { L, type Localized } from "./locale";
 import {
@@ -12,6 +14,7 @@ export type Translate = (text: Localized) => string;
 export function useAssets(scope: string, ids: string[]) {
   const key = [...new Set(ids)].sort().join("|"),
     [urls, setUrls] = useState<Record<string, string>>({}),
+    [sources, setSources] = useState<Record<string, Blob>>({}),
     [cached, setCached] = useState<Set<string>>(new Set()),
     [warning, setWarning] = useState(""),
     [saving, setSaving] = useState(0),
@@ -43,6 +46,7 @@ export function useAssets(scope: string, ids: string[]) {
           const url = URL.createObjectURL(asset.blob);
           allUrls.current.push(url);
           setUrls((old) => ({ ...old, [id]: url }));
+          setSources((old) => ({ ...old, [id]: asset.blob }));
           setCached((old) => new Set([...old, id]));
         })
         .catch(() => {
@@ -55,6 +59,7 @@ export function useAssets(scope: string, ids: string[]) {
     allUrls.current.push(url);
     attempted.current.add(id);
     setUrls((old) => ({ ...old, [id]: url }));
+    setSources((old) => ({ ...old, [id]: file }));
     setSaving((n) => n + 1);
     try {
       await saveLocalAsset(scope, id, file, file.name);
@@ -76,7 +81,7 @@ export function useAssets(scope: string, ids: string[]) {
     setCached((old) => new Set([...old].filter((id) => !ids.includes(id))));
     refresh();
   }
-  return { urls, cached, warning, saving, usage, add, clear };
+  return { urls, sources, cached, warning, saving, usage, add, clear };
 }
 export function CacheStatus({
   assets,
@@ -190,15 +195,27 @@ export function Slider({
   onEnd?: () => void;
   disabled?: boolean;
 }) {
+  const { t } = useLocale();
   return (
-    <label>
-      <span>
-        {label}
-        <output>
-          {Number(value.toFixed(2))}
-          {unit}
-        </output>
-      </span>
+    <div className="media-slider">
+      <div className="media-slider-heading">
+        <span>
+          {label}
+          {unit ? ` · ${unit.trim()}` : ""}
+        </span>
+        <PrecisionNumber
+          compact
+          label={`${label}: ${t(L("точное значение", "exact value", "нақты мән"))}`}
+          value={value}
+          min={min}
+          max={max}
+          step={step}
+          disabled={disabled}
+          onBegin={onBegin}
+          onValue={onChange}
+          onEnd={onEnd}
+        />
+      </div>
       <input
         aria-label={label}
         type="range"
@@ -215,9 +232,10 @@ export function Slider({
         disabled={disabled}
         onChange={(e) => onChange(+e.target.value)}
       />
-    </label>
+    </div>
   );
 }
+
 export function HistoryButtons({
   history,
   t,

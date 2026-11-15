@@ -24,7 +24,17 @@ export type ImageSource = CanvasImageSource & {
   videoWidth?: number;
   videoHeight?: number;
 };
+export type RasterCanvas = HTMLCanvasElement | OffscreenCanvas;
+export type RasterWorkspace = { stage: RasterCanvas };
+export const rasterCanvas = (w = 1, h = 1): RasterCanvas => {
+  if (typeof OffscreenCanvas !== "undefined") return new OffscreenCanvas(w, h);
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  return c;
+};
 export type ImageRenderOptions = {
+  workspace?: RasterWorkspace;
   /** Compare keeps the same geometry; only color/filter adjustments are bypassed. */
   compare?: boolean;
   /** Cap preview's longest side independently from the intended export size. */
@@ -46,7 +56,7 @@ const MIN_CROP = 0.001;
 const clamp = (n: number, min: number, max: number) =>
   Math.min(max, Math.max(min, Number.isFinite(n) ? n : min));
 const rotationOf = (rotation: number) =>
-  ((Number.isFinite(rotation) ? rotation : 0) % 360 + 360) % 360;
+  (((Number.isFinite(rotation) ? rotation : 0) % 360) + 360) % 360;
 
 /** Rotation is clockwise, matching Canvas and the editor's 90-degree control. */
 export function orientedDimensions(
@@ -137,7 +147,12 @@ export function imageGeometry(
 function sourceDimensions(source: ImageSource) {
   const width = source.naturalWidth || source.videoWidth || source.width;
   const height = source.naturalHeight || source.videoHeight || source.height;
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0)
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  )
     throw new Error("IMAGE_NOT_READY");
   return { width, height };
 }
@@ -148,7 +163,7 @@ function sourceDimensions(source: ImageSource) {
  * Export dimensions are returned separately when a preview cap is requested.
  */
 export function renderImage(
-  canvas: HTMLCanvasElement,
+  canvas: RasterCanvas,
   source: ImageSource,
   settings: ImageSettings,
   options: ImageRenderOptions = {},
@@ -165,7 +180,7 @@ export function renderImage(
     MAX_EDGE / geometry.orientedWidth,
     MAX_EDGE / geometry.orientedHeight,
   );
-  const stage = document.createElement("canvas");
+  const stage = options.workspace?.stage ?? rasterCanvas();
   stage.width = Math.max(1, Math.round(geometry.orientedWidth * stageScale));
   stage.height = Math.max(1, Math.round(geometry.orientedHeight * stageScale));
   const stageContext = stage.getContext("2d");
@@ -201,7 +216,10 @@ export function renderImage(
         )
       : 1;
     canvas.width = Math.max(1, Math.round(geometry.exportWidth * previewScale));
-    canvas.height = Math.max(1, Math.round(geometry.exportHeight * previewScale));
+    canvas.height = Math.max(
+      1,
+      Math.round(geometry.exportHeight * previewScale),
+    );
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = "high";
@@ -219,7 +237,9 @@ export function renderImage(
     );
     return { ...geometry, width: canvas.width, height: canvas.height };
   } finally {
-    stage.width = 1;
-    stage.height = 1;
+    if (!options.workspace) {
+      stage.width = 1;
+      stage.height = 1;
+    }
   }
 }

@@ -1,3 +1,15 @@
+import {
+  frameRate,
+  snapToFrame,
+  timecode,
+  toTicks,
+  toSeconds,
+  ticksPerFrame,
+} from "../engine/time";
+import { keyframeTrack, type VideoKeyframe } from "../engine/keyframes";
+import { FrameTelemetry } from "../engine/telemetry";
+import { AudioStrip, PreviewAudioBus } from "../engine/audio";
+import { PrecisionNumber } from "./PrecisionNumber";
 import { parseCaptions, captionsToSrt } from "./captions";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { z } from "zod";
@@ -19,6 +31,7 @@ import {
   locateClip,
   mediaReady,
   paintVideoFrame,
+  prepareVideoFrame,
   seekMedia,
   timelineDuration,
   type TimelineClip,
@@ -54,11 +67,16 @@ export default function VideoWorkbench({
     [timelineZoom, setTimelineZoom] = useState(45),
     [timelineAreaWidth, setTimelineAreaWidth] = useState(640),
     [muted, setMuted] = useState(false),
-    [captionId, setCaptionId] = useState<string | null>(null);
+    [captionId, setCaptionId] = useState<string | null>(null),
+    [frameSnap, setFrameSnap] = useState(true),
+    [keyId, setKeyId] = useState<string | null>(null),
+    [renderStats, setRenderStats] = useState({ mean: 0, p95: 0, samples: 0 }),
+    [peak, setPeak] = useState(0),
+    [rms, setRms] = useState(0);
   const doc = useRef(value);
   doc.current = value;
   const position = useRef(playhead);
-  position.current = playhead;
+
   const ids = [
       ...new Set([
         ...value.clips.flatMap((c) => (c.assetId ? [c.assetId] : [])),
@@ -74,7 +92,8 @@ export default function VideoWorkbench({
     music = useRef<{ url: string; audio: HTMLAudioElement } | null>(null),
     playback = useRef<AbortController | null>(null),
     exportAbort = useRef<AbortController | null>(null),
-    mounted = useRef(true);
+    mounted = useRef(true),
+    previewAudio = useRef<PreviewAudioBus | null>(null);
   const cur = value.clips.find((c) => c.id === selected) ?? null,
     total = timelineDuration(value.clips),
     dimensions = videoDimensions(+value.width, value.aspect),
@@ -87,7 +106,10 @@ export default function VideoWorkbench({
     playback.current = null;
     for (const e of elements.current.values()) e.video.pause();
     music.current?.audio.pause();
-    if (mounted.current) setPlaying(false);
+    if (mounted.current) {
+      setPlaying(false);
+      setPlayhead(position.current);
+    }
   }
   function setHead(s: number) {
     position.current = s;
@@ -95,13 +117,19 @@ export default function VideoWorkbench({
   }
   function seek(s: number) {
     stop();
-    setHead(Math.max(0, Math.min(total, s)));
+    setHead(
+      Math.max(
+        0,
+        Math.min(total, frameSnap ? snapToFrame(s, value.fps ?? 30) : s),
+      ),
+    );
   }
   function getVideo(clip: TimelineClip) {
     const url = clip.assetId ? assets.urls[clip.assetId] : undefined;
     if (!url) return null;
     let e = elements.current.get(clip.id);
     if (e?.url !== url) {
+      if (e) previewAudio.current?.remove(e.video);
       e?.video.pause();
       e?.video.removeAttribute("src");
       e?.video.load();
@@ -142,8 +170,21 @@ export default function VideoWorkbench({
       }
       music.current?.audio.pause();
       music.current?.audio.removeAttribute("src");
+      previewAudio.current?.dispose();
+      previewAudio.current = null;
     };
   }, []);
+  useEffect(() => {
+    for (const [id, entry] of elements.current) {
+      if (!value.clips.some((c) => c.id === id)) {
+        entry.video.pause();
+        entry.video.removeAttribute("src");
+        entry.video.load();
+        previewAudio.current?.remove(entry.video);
+        elements.current.delete(id);
+      }
+    }
+  }, [value.clips]);
   useEffect(() => {
     if (selected && !value.clips.some((c) => c.id === selected))
       setSelected(value.clips[0]?.id ?? null);
@@ -217,10 +258,16 @@ export default function VideoWorkbench({
     const controller = new AbortController();
     playback.current = controller;
     const snapshot = structuredClone(value);
+    const telemetry = new FrameTelemetry();
+    let lastUI = 0;
+    const animated = new Float64Array(5),
+      levels = new Float64Array(2);
+    const audioBus = (previewAudio.current ??= new PreviewAudioBus());
     let at = position.current >= total - 0.01 ? 0 : position.current;
     setHead(at);
     setPlaying(true);
     try {
+      await audioBus.resume();
       // Prepare decoder positions before starting the soundtrack, so buffering
       // cannot put music ahead of the composed picture.
       for (const clip of snapshot.clips) {
@@ -234,7 +281,10 @@ export default function VideoWorkbench({
         await mediaReady(audio, controller.signal);
         if (Number.isFinite(audio.duration) && at < audio.duration) {
           await seekMedia(audio, at, controller.signal);
-          audio.volume = muted ? 0 : snapshot.soundtrack.volume;
+          audio.volume = 1;
+          audioBus
+            .strip(audio)
+            .setVolume(muted ? 0 : snapshot.soundtrack.volume);
           startSoundtrack = true;
         }
       }
@@ -249,9 +299,11 @@ export default function VideoWorkbench({
           controller.signal,
         );
         video.playbackRate = loc.clip.speed ?? 1;
-        video.volume = muted
-          ? 0
-          : loc.clip.volume * clipOpacity(loc.clip, loc.local);
+        video.volume = 1;
+        const audioStrip = audioBus.strip(video, loc.clip.audioEQ);
+        audioStrip.setVolume(
+          muted ? 0 : loc.clip.volume * clipOpacity(loc.clip, loc.local),
+        );
         await Promise.all([
           video.play(),
           startSoundtrack && audio ? audio.play() : Promise.resolve(),
@@ -277,7 +329,10 @@ export default function VideoWorkbench({
             };
           controller.signal.addEventListener("abort", abort, { once: true });
           video.addEventListener("error", bad, { once: true });
+          const track = keyframeTrack(loc.clip);
+          if (preview.current) prepareVideoFrame(preview.current, snapshot);
           const tick = () => {
+            const frameStarted = performance.now();
             if (controller.signal.aborted) {
               abort();
               return;
@@ -300,9 +355,12 @@ export default function VideoWorkbench({
               loc.offset +
               Math.max(0, video.currentTime - loc.clip.start) /
                 (loc.clip.speed ?? 1);
-            video.volume = muted
-              ? 0
-              : loc.clip.volume * clipOpacity(loc.clip, video.currentTime);
+            track.evaluate(toTicks(video.currentTime), animated);
+            audioStrip.setVolume(
+              muted
+                ? 0
+                : animated[4] * clipOpacity(loc.clip, video.currentTime),
+            );
             if (preview.current)
               paintVideoFrame(
                 preview.current,
@@ -312,7 +370,15 @@ export default function VideoWorkbench({
                 snapshot.bg,
                 snapshot,
               );
-            setHead(at);
+            position.current = at;
+            if (frameStarted - lastUI >= 100) {
+              lastUI = frameStarted;
+              setPlayhead(at);
+              audioBus.measure(levels);
+              setPeak(levels[0]);
+              setRms(levels[1]);
+            }
+            telemetry.record(performance.now() - frameStarted);
             frame = requestAnimationFrame(tick);
           };
           tick();
@@ -332,7 +398,10 @@ export default function VideoWorkbench({
           ),
         );
     } finally {
-      if (playback.current === controller) stop();
+      if (playback.current === controller) {
+        stop();
+        setRenderStats(telemetry.summary());
+      }
     }
   }
   useEffect(() => {
@@ -373,6 +442,66 @@ export default function VideoWorkbench({
     stop();
     live ? history.update(next) : history.commit(next);
   }
+  const selectedKey = cur?.keyframes?.find((k) => k.id === keyId) ?? null;
+  function addKeyframe() {
+    if (!cur || !location || location.clip.id !== cur.id) return;
+    const keyLocation = locateClip(
+      value.clips,
+      Math.max(0, Math.min(total, snapToFrame(playhead, value.fps ?? 30))),
+    );
+    if (!keyLocation || keyLocation.clip.id !== cur.id) return;
+    const tick = Math.max(
+        0,
+        Math.min(toTicks(cur.duration), toTicks(keyLocation.local)),
+      ),
+      existing = cur.keyframes?.find((k) => k.tick === tick);
+    if (existing) {
+      setKeyId(existing.id);
+      return;
+    }
+    if ((cur.keyframes?.length ?? 0) >= 120) return;
+    const values = new Float64Array(5);
+    keyframeTrack(cur).evaluate(tick, values);
+    const key: VideoKeyframe = {
+      id: crypto.randomUUID(),
+      tick,
+      zoom: values[0],
+      panX: values[1],
+      panY: values[2],
+      brightness: values[3],
+      volume: values[4],
+      interpolation: "smooth",
+    };
+    edit({
+      keyframes: [...(cur.keyframes ?? []), key].sort(
+        (a, b) => a.tick - b.tick,
+      ),
+    });
+    setKeyId(key.id);
+  }
+  function editKey(change: Partial<VideoKeyframe>, live = false) {
+    if (cur && selectedKey)
+      edit(
+        {
+          keyframes: cur.keyframes?.map((k) =>
+            k.id === selectedKey.id ? { ...k, ...change } : k,
+          ),
+        },
+        live,
+      );
+  }
+  function chooseKey(id: string) {
+    if (!cur) return;
+    const key = cur.keyframes?.find((k) => k.id === id);
+    if (!key) return;
+    setKeyId(id);
+    let offset = 0;
+    for (const c of value.clips) {
+      if (c.id === cur.id) break;
+      offset += clipDuration(c);
+    }
+    seek(offset + (toSeconds(key.tick) - cur.start) / (cur.speed ?? 1));
+  }
   function moveClip(id: string, index: number) {
     const clips = [...value.clips],
       from = clips.findIndex((c) => c.id === id);
@@ -382,15 +511,19 @@ export default function VideoWorkbench({
     apply({ ...value, clips });
   }
   function split() {
-    const loc = locateClip(value.clips, playhead);
+    const loc = locateClip(
+      value.clips,
+      frameSnap ? snapToFrame(playhead, value.fps ?? 30) : playhead,
+    );
     if (
       !loc ||
       loc.local - loc.clip.start < 0.05 ||
       loc.clip.end - loc.local < 0.05
     )
       return;
-    const right = { ...loc.clip, id: crypto.randomUUID(), start: loc.local },
-      left = { ...loc.clip, end: loc.local },
+    const boundary = loc.local;
+    const right = { ...loc.clip, id: crypto.randomUUID(), start: boundary },
+      left = { ...loc.clip, end: boundary },
       clips = [...value.clips];
     clips.splice(loc.index, 1, left, right);
     apply({ ...value, clips });
@@ -620,7 +753,8 @@ export default function VideoWorkbench({
     const outputSize = videoDimensions(+snapshot.width, snapshot.aspect);
     output.width = outputSize.width;
     output.height = outputSize.height;
-    const stream = output.captureStream(snapshot.fps ?? 30),
+    const outputRate = frameRate(snapshot.fps ?? 30);
+    const stream = output.captureStream(outputRate.num / outputRate.den),
       audio = new AudioContext(),
       destination = audio.createMediaStreamDestination(),
       mix = audio.createDynamicsCompressor(),
@@ -642,7 +776,8 @@ export default function VideoWorkbench({
     let bytes = 0,
       exportError = "",
       recorderError: Error | null = null;
-    const videos: HTMLVideoElement[] = [];
+    const videos: HTMLVideoElement[] = [],
+      strips: AudioStrip[] = [];
     let soundtrack: HTMLAudioElement | null = null;
     const stopped = new Promise<void>((ok, no) => {
       recorder.onstop = () => ok();
@@ -662,6 +797,7 @@ export default function VideoWorkbench({
       }
       chunks.push(e.data);
     };
+    const exportValues = new Float64Array(5);
     let elapsed = 0;
     try {
       await audio.resume();
@@ -685,7 +821,9 @@ export default function VideoWorkbench({
         const source = audio.createMediaElementSource(video),
           gain = audio.createGain();
         gain.gain.value = clip.volume;
-        source.connect(gain).connect(mix);
+        const strip = new AudioStrip(audio, source, gain, clip.audioEQ);
+        strips.push(strip);
+        gain.connect(mix);
         tracks.push({ clip, video, gain, source });
       }
       if (snapshot.soundtrack) {
@@ -698,6 +836,8 @@ export default function VideoWorkbench({
         gain.gain.value = snapshot.soundtrack.volume;
         source.connect(gain).connect(mix);
       }
+      prepareVideoFrame(output, snapshot);
+      if (preview.current) prepareVideoFrame(preview.current, snapshot);
       paintVideoFrame(
         output,
         tracks[0].video,
@@ -808,7 +948,11 @@ export default function VideoWorkbench({
               return;
             }
             gain.gain.value =
-              clip.volume * clipOpacity(clip, video.currentTime);
+              (keyframeTrack(clip).evaluate(
+                toTicks(video.currentTime),
+                exportValues,
+              ),
+              exportValues[4]) * clipOpacity(clip, video.currentTime);
             paintVideoFrame(
               output,
               video,
@@ -906,6 +1050,7 @@ export default function VideoWorkbench({
       soundtrack?.pause();
       soundtrack?.removeAttribute("src");
       stream.getTracks().forEach((track) => track.stop());
+      for (const strip of strips) strip.dispose();
       silence.stop();
       silence.disconnect();
       await audio.close().catch(() => undefined);
@@ -947,7 +1092,9 @@ export default function VideoWorkbench({
       seek(
         playhead +
           (e.key === "ArrowRight" ? 1 : -1) *
-            (e.shiftKey ? 1 : 1 / (value.fps ?? 30)),
+            (e.shiftKey
+              ? 1
+              : toSeconds(ticksPerFrame(frameRate(value.fps ?? 30)))),
       );
     }
   }
@@ -1002,11 +1149,7 @@ export default function VideoWorkbench({
             disabled ||
             !location ||
             playhead - location.offset < 0.05 ||
-            location.offset +
-              location.clip.end -
-              location.clip.start -
-              playhead <
-              0.05
+            location.offset + clipDuration(location.clip) - playhead < 0.05
           }
           onClick={split}
           title="S"
@@ -1089,6 +1232,9 @@ export default function VideoWorkbench({
             </button>
             <span className="media-timecode">
               {formatTime(playhead)} / {formatTime(total)}
+              <small className="media-frame-code">
+                {timecode(playhead, value.fps ?? 30)} NDF
+              </small>
             </span>
             <button
               disabled={disabled}
@@ -1118,7 +1264,11 @@ export default function VideoWorkbench({
                 type="range"
                 min={0}
                 max={Math.max(total, 0.01)}
-                step={1 / (value.fps ?? 30)}
+                step={
+                  frameSnap
+                    ? toSeconds(ticksPerFrame(frameRate(value.fps ?? 30)))
+                    : 0.001
+                }
                 value={Math.min(playhead, total)}
                 disabled={disabled || !total}
                 onChange={(e) => seek(+e.target.value)}
@@ -1612,6 +1762,201 @@ export default function VideoWorkbench({
                 onEnd={history.end}
                 onChange={(n) => edit({ contrast: n }, true)}
               />
+              {cur.keyframes?.length ? (
+                <p className="media-muted">
+                  {t(
+                    L(
+                      "Ключевые кадры задают масштаб, панораму, яркость и громкость. Изменяйте их в полях «Ключ».",
+                      "Keyframes control zoom, pan, brightness and volume. Edit them in the Key fields.",
+                      "Негізгі кадрлар масштаб, панорама, жарықтық пен дыбысты басқарады. Оларды Кілт өрістерінде өзгертіңіз.",
+                    ),
+                  )}
+                </p>
+              ) : null}
+              <details
+                className="media-wide"
+                open={!!cur.keyframes?.length || undefined}
+              >
+                <summary>
+                  {t(
+                    L(
+                      "Анимация · ключевые кадры",
+                      "Animation · keyframes",
+                      "Анимация · негізгі кадрлар",
+                    ),
+                  )}
+                </summary>
+                <div className="media-keyframe-row">
+                  <button
+                    disabled={
+                      disabled ||
+                      location?.clip.id !== cur.id ||
+                      (cur.keyframes?.length ?? 0) >= 120
+                    }
+                    onClick={addKeyframe}
+                  >
+                    {t(
+                      L(
+                        "Добавить ключевой кадр",
+                        "Add keyframe",
+                        "Негізгі кадр қосу",
+                      ),
+                    )}{" "}
+                    ◇
+                  </button>
+                </div>
+                {!!cur.keyframes?.length && (
+                  <label>
+                    {t(L("Ключевой кадр", "Keyframe", "Негізгі кадр"))}
+                    <select
+                      aria-label={t(
+                        L("Ключевой кадр", "Keyframe", "Негізгі кадр"),
+                      )}
+                      value={selectedKey?.id ?? ""}
+                      onChange={(e) => chooseKey(e.target.value)}
+                    >
+                      <option value="" disabled>
+                        —
+                      </option>
+                      {cur.keyframes.map((k) => (
+                        <option value={k.id} key={k.id}>
+                          {timecode(toSeconds(k.tick), value.fps ?? 30)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {selectedKey && (
+                  <>
+                    <label>
+                      {t(L("Интерполяция", "Interpolation", "Интерполяция"))}
+                      <select
+                        aria-label={t(
+                          L("Интерполяция", "Interpolation", "Интерполяция"),
+                        )}
+                        value={selectedKey.interpolation}
+                        onChange={(e) =>
+                          editKey({
+                            interpolation: e.target
+                              .value as VideoKeyframe["interpolation"],
+                          })
+                        }
+                      >
+                        <option value="smooth">
+                          {t(L("Плавная", "Smooth", "Бірқалыпты"))}
+                        </option>
+                        <option value="linear">
+                          {t(L("Линейная", "Linear", "Сызықтық"))}
+                        </option>
+                        <option value="hold">
+                          {t(L("Удержание", "Hold", "Ұстап тұру"))}
+                        </option>
+                      </select>
+                    </label>
+                    {(
+                      ["zoom", "panX", "panY", "brightness", "volume"] as const
+                    ).map((field, i) => (
+                      <PrecisionNumber
+                        key={field}
+                        label={t(
+                          [
+                            L("Ключ: масштаб", "Key: zoom", "Кілт: масштаб"),
+                            L("Ключ: X", "Key: X", "Кілт: X"),
+                            L("Ключ: Y", "Key: Y", "Кілт: Y"),
+                            L(
+                              "Ключ: яркость",
+                              "Key: brightness",
+                              "Кілт: жарықтық",
+                            ),
+                            L("Ключ: громкость", "Key: volume", "Кілт: дыбыс"),
+                          ][i],
+                        )}
+                        value={selectedKey[field]}
+                        min={
+                          field === "zoom"
+                            ? 1
+                            : field === "panX" || field === "panY"
+                              ? -1
+                              : 0
+                        }
+                        max={
+                          field === "zoom"
+                            ? 3
+                            : field === "brightness"
+                              ? 200
+                              : 1
+                        }
+                        step={field === "brightness" ? 1 : 0.01}
+                        onBegin={begin}
+                        onValue={(n) => editKey({ [field]: n }, true)}
+                        onEnd={history.end}
+                      />
+                    ))}
+                    <button
+                      onClick={() => {
+                        edit({
+                          keyframes: cur.keyframes?.filter(
+                            (k) => k.id !== selectedKey.id,
+                          ),
+                        });
+                        setKeyId(null);
+                      }}
+                    >
+                      {t(
+                        L(
+                          "Удалить ключевой кадр",
+                          "Delete keyframe",
+                          "Негізгі кадрды жою",
+                        ),
+                      )}
+                    </button>
+                  </>
+                )}
+              </details>
+              <details className="media-wide">
+                <summary>
+                  {t(
+                    L(
+                      "Эквалайзер · 3 полосы",
+                      "Equalizer · 3 bands",
+                      "Эквалайзер · 3 жолақ",
+                    ),
+                  )}
+                </summary>
+                {(["low", "mid", "high"] as const).map((band, i) => (
+                  <Slider
+                    key={band}
+                    label={t(
+                      [
+                        L("Низкие, dB", "Low, dB", "Төменгі, dB"),
+                        L("Средние, dB", "Mid, dB", "Ортаңғы, dB"),
+                        L("Высокие, dB", "High, dB", "Жоғарғы, dB"),
+                      ][i],
+                    )}
+                    value={cur.audioEQ?.[band] ?? 0}
+                    min={-12}
+                    max={12}
+                    step={0.5}
+                    disabled={disabled}
+                    onBegin={begin}
+                    onEnd={history.end}
+                    onChange={(n) =>
+                      edit(
+                        {
+                          audioEQ: {
+                            low: 0,
+                            mid: 0,
+                            high: 0,
+                            ...cur.audioEQ,
+                            [band]: n,
+                          },
+                        },
+                        true,
+                      )
+                    }
+                  />
+                ))}
+              </details>
             </>
           ) : (
             <p className="media-muted">
@@ -1679,6 +2024,29 @@ export default function VideoWorkbench({
               </button>
             </>
           )}
+          <details className="media-wide">
+            <summary>
+              {t(
+                L(
+                  "Контроль воспроизведения",
+                  "Playback monitoring",
+                  "Ойнатуды бақылау",
+                ),
+              )}
+            </summary>
+            <label>
+              Peak{" "}
+              <meter min={0} max={1} high={0.9} optimum={0.5} value={peak} />
+            </label>
+            <label>
+              RMS <meter min={0} max={1} value={rms} />
+            </label>
+            <p className="media-muted">
+              {t(L("Отрисовка кадра", "Frame rendering", "Кадрды көрсету"))}:{" "}
+              {renderStats.mean.toFixed(1)} ms · p95{" "}
+              {renderStats.p95.toFixed(1)} ms
+            </p>
+          </details>
           <h3>
             {t(L("Параметры проекта", "Project settings", "Жоба баптаулары"))}
           </h3>
@@ -1714,12 +2082,20 @@ export default function VideoWorkbench({
                 apply({ ...value, fps: +e.target.value as VideoDoc["fps"] })
               }
             >
-              {[24, 25, 30, 60].map((n) => (
+              {[23.976, 24, 25, 29.97, 30, 59.94, 60].map((n) => (
                 <option key={n} value={n}>
                   {n} fps
                 </option>
               ))}
             </select>
+          </label>
+          <label className="media-check">
+            <input
+              type="checkbox"
+              checked={frameSnap}
+              onChange={(e) => setFrameSnap(e.target.checked)}
+            />
+            {t(L("Привязка к кадрам", "Snap to frames", "Кадрларға байлау"))}
           </label>
           <details className="media-wide">
             <summary>

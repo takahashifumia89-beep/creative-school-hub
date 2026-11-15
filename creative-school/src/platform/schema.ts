@@ -1,6 +1,16 @@
 import { sceneSchema } from "./model-schema";
 export { sceneSchema } from "./model-schema";
 import { z } from "zod";
+const keyframeSchema = z.object({
+  id: z.string().uuid(),
+  tick: z.number().int().min(0).max(5_080_320_000_000),
+  zoom: z.number().min(1).max(3),
+  panX: z.number().min(-1).max(1),
+  panY: z.number().min(-1).max(1),
+  brightness: z.number().min(0).max(200),
+  volume: z.number().min(0).max(1),
+  interpolation: z.enum(["linear", "smooth", "hold"]),
+});
 const color = z.string().regex(/^#[0-9a-f]{6}$/i);
 const num = z.number().finite().min(-10000).max(10000);
 export const designSchema = z.object({
@@ -11,6 +21,7 @@ export const designSchema = z.object({
     .array(
       z.object({
         id: z.string().max(80),
+        groupId: z.string().uuid().optional(),
         type: z.enum([
           "rect",
           "ellipse",
@@ -101,6 +112,12 @@ export const imageSchema = z.object({
   flipY: z.boolean().optional(),
   sepia: z.number().min(0).max(100).optional(),
   blur: z.number().min(0).max(10).optional(),
+  linearColor: z.boolean().optional(),
+  exposure: z.number().min(-4).max(4).optional(),
+  temperature: z.number().min(-100).max(100).optional(),
+  tint: z.number().min(-100).max(100).optional(),
+  vignette: z.number().min(0).max(100).optional(),
+  toneMap: z.enum(["none", "aces"]).optional(),
 });
 export const videoSchema = z.object({
   clips: z
@@ -131,8 +148,31 @@ export const videoSchema = z.object({
           titleSize: z.number().min(20).max(100).optional(),
           titlePosition: z.enum(["top", "center", "bottom"]).optional(),
           titleAlign: z.enum(["left", "center", "right"]).optional(),
+          keyframes: z
+            .array(keyframeSchema)
+            .max(120)
+            .refine(
+              (keys) =>
+                new Set(keys.map((k) => k.tick)).size === keys.length &&
+                new Set(keys.map((k) => k.id)).size === keys.length,
+            )
+            .optional(),
+          audioEQ: z
+            .object({
+              low: z.number().min(-12).max(12),
+              mid: z.number().min(-12).max(12),
+              high: z.number().min(-12).max(12),
+            })
+            .optional(),
         })
-        .refine((c) => c.end > c.start && c.end <= c.duration),
+        .refine(
+          (c) =>
+            c.end > c.start &&
+            c.end <= c.duration &&
+            (c.keyframes ?? []).every(
+              (k) => k.tick <= Math.round(c.duration * 705600000),
+            ),
+        ),
     )
     .max(30),
   soundtrack: z
@@ -145,7 +185,15 @@ export const videoSchema = z.object({
   width: z.enum(["1280", "720"]),
   aspect: z.enum(["wide", "portrait", "square"]).optional(),
   fps: z
-    .union([z.literal(24), z.literal(25), z.literal(30), z.literal(60)])
+    .union([
+      z.literal(23.976),
+      z.literal(24),
+      z.literal(25),
+      z.literal(29.97),
+      z.literal(30),
+      z.literal(59.94),
+      z.literal(60),
+    ])
     .optional(),
   captions: z
     .array(

@@ -1,0 +1,67 @@
+.precision-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 22px;
+}
+.precision-scrub {
+  cursor: ew-resize !important;
+  touch-action: none;
+  user-select: none;
+  border: 0 !important;
+  background: transparent !important;
+  color: inherit;
+  padding: 0 5px !important;
+  min-height: 22px !important;
+  font-size: 15px !important;
+  line-height: 1;
+}
+.precision-scrub:focus-visible {
+  outline: 2px solid var(--accent, #9cbd00);
+  outline-offset: 2px;
+}
+.precision-number {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+}
+.precision-number input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border, #d8d2c7);
+  border-radius: 6px;
+  background: var(--surface, #fffdf8);
+  color: inherit;
+  padding: 7px;
+}
+.precision-number.is-compact {
+  display: flex !important;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+  max-width: 105px;
+}
+.precision-number.is-compact .precision-name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.precision-number.is-compact input {
+  width: 68px !important;
+  height: 26px !important;
+  padding: 3px 5px !important;
+  margin: 0 !important;
+  font-variant-numeric: tabular-nums;
+}
+.precision-number.is-compact .precision-label {
+  min-height: 22px;
+}
+.precision-number input {
+  border-color: hsl(var(--border));
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}

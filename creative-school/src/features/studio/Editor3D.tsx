@@ -1,3 +1,7 @@
+import { CommandHistory } from "@/engine/history";
+import { ModelEngine, type EvaluatedMesh } from "@/engine/model-client";
+import type { ModelModifier } from "@/platform/model-schema";
+import { PrecisionNumber } from "@/platform/PrecisionNumber";
 import {
   useCallback,
   useEffect,
@@ -44,11 +48,9 @@ import { L, useLocale } from "@/platform/locale";
 import { download } from "@/platform/client";
 import { sceneSchema, type Obj, type SceneDoc } from "@/platform/model-schema";
 import {
-  editableGeometry,
-  geometryFor,
+  baseGeometryFor,
+  geometryFromBuffers,
   matrixFor,
-  parseOBJ,
-  sceneForExport,
 } from "./model-geometry";
 import "./model-workspace.css";
 export type { Obj, SceneDoc } from "@/platform/model-schema";
@@ -84,78 +86,83 @@ function Numeric({
   onValue: (n: number) => void;
   onEnd: () => void;
 }) {
-  const [raw, setRaw] = useState(String(round(value))),
-    focused = useRef(false),
-    start = useRef(value);
-  useEffect(() => {
-    if (!focused.current) setRaw(String(round(value)));
-  }, [value]);
   return (
-    <label className="model-number">
-      <span>{label}</span>
-      <input
-        type="number"
-        value={raw}
-        min={min}
-        max={max}
-        step={step}
-        onFocus={() => {
-          focused.current = true;
-          start.current = value;
-          onBegin();
-        }}
-        onChange={(e) => {
-          setRaw(e.target.value);
-          if (
-            e.target.value.trim() !== "" &&
-            Number.isFinite(Number(e.target.value))
-          )
-            onValue(clamp(Number(e.target.value), min, max));
-        }}
-        onBlur={() => {
-          focused.current = false;
-          setRaw(String(round(value)));
-          onEnd();
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") e.currentTarget.blur();
-          if (e.key === "Escape") {
-            e.stopPropagation();
-            onValue(start.current);
-            e.currentTarget.blur();
-          }
-        }}
-      />
-    </label>
+    <PrecisionNumber
+      label={label}
+      value={value}
+      min={min}
+      max={max}
+      step={step}
+      className="model-number"
+      onBegin={onBegin}
+      onValue={onValue}
+      onEnd={onEnd}
+    />
   );
 }
+
 function SceneObject({
   object: o,
   selected,
   wireframe,
   onSelect,
   register,
+  engine,
+  onEvaluated,
 }: {
   object: Obj;
   selected: boolean;
   wireframe: boolean;
   onSelect: (id: string) => void;
   register: (id: string, mesh: Mesh | null) => void;
+  engine: () => ModelEngine;
+  onEvaluated: (id: string, result: EvaluatedMesh | null) => void;
 }) {
-  const geometry = useMemo(
-      () => geometryFor(o),
-      [o.kind, o.segments, o.vertices, o.indices],
-    ),
+  const signature = JSON.stringify([
+    o.kind,
+    o.segments,
+    o.vertices,
+    o.indices,
+    o.modifiers,
+  ]);
+  const fallback = useMemo(
+    () => baseGeometryFor({ ...o, modifiers: undefined }),
+    [o.kind, o.segments, o.vertices, o.indices],
+  );
+  const [evaluated, setEvaluated] = useState<{
+    signature: string;
+    geometry: BufferGeometry;
+  } | null>(null);
+  const geometry =
+      evaluated?.signature === signature ? evaluated.geometry : fallback,
     ref = useRef<Mesh>(null),
     s = o.size ?? [1, 1, 1];
   useEffect(() => {
+    let active = true;
+    void engine()
+      .evaluate(o)
+      .then((result) => {
+        if (!active) return;
+        setEvaluated({ signature, geometry: geometryFromBuffers(result) });
+        onEvaluated(o.id, result);
+      })
+      .catch(() => {
+        if (active) onEvaluated(o.id, null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [signature, engine, onEvaluated]);
+  useEffect(() => () => fallback.dispose(), [fallback]);
+  useEffect(() => () => evaluated?.geometry.dispose(), [evaluated]);
+  useEffect(() => {
     register(o.id, ref.current);
     return () => register(o.id, null);
-  }, [o.id, register]);
-  useEffect(() => () => geometry.dispose(), [geometry]);
+  }, [o.id, register, geometry]);
   return (
     <mesh
       ref={ref}
+      name={o.id}
       geometry={geometry}
       position={o.pos}
       rotation={[(o.rotX ?? 0) * rad, o.rotY * rad, (o.rotZ ?? 0) * rad]}
@@ -187,7 +194,7 @@ function CameraRig({
   selected: string | null;
   controls: RefObject<OrbitControlsImpl | null>;
 }) {
-  const { camera, size, raycaster } = useThree();
+  const { camera, size, raycaster, invalidate } = useThree();
   useEffect(() => {
     raycaster.params.Points.threshold = 0.12;
   }, [raycaster]);
@@ -226,6 +233,7 @@ function CameraRig({
     camera.updateProjectionMatrix();
     controls.current.target.copy(center);
     controls.current.update();
+    invalidate();
   }, [command, camera, size.width, size.height, objects, controls]);
   return null;
 }
@@ -308,6 +316,13 @@ export function Editor3D({
     }),
     [error, setError] = useState(""),
     [exporting, setExporting] = useState(false),
+    [space, setSpace] = useState<"world" | "local">("world"),
+    [modelStats, setModelStats] = useState({
+      ms: 0,
+      vertices: 0,
+      triangles: 0,
+      cacheBytes: 0,
+    }),
     [vertexMode, setVertexMode] = useState(false),
     [vertex, setVertex] = useState(0),
     [selectedMesh, setSelectedMesh] = useState<Mesh | null>(null),
@@ -315,12 +330,57 @@ export function Editor3D({
   const objectRefs = useRef(new Map<string, Mesh>()),
     gl = useRef<WebGLRenderer | null>(null),
     orbit = useRef<OrbitControlsImpl | null>(null),
-    past = useRef<SceneDoc[]>([]),
-    future = useRef<SceneDoc[]>([]),
+    commands = useRef<CommandHistory<SceneDoc>>(null!),
     transaction = useRef<SceneDoc | null>(null),
-    emitted = useRef(JSON.stringify(value)),
+    emitted = useRef(""),
     [, refresh] = useReducer((n) => n + 1, 0);
+  commands.current ??= new CommandHistory(value, 50);
+  emitted.current ||= JSON.stringify(value);
+  const modelEngine = useRef<ModelEngine | null>(null),
+    evaluatedStats = useRef(new Map<string, typeof modelStats>());
+  const getEngine = useCallback(
+    () => (modelEngine.current ??= new ModelEngine()),
+    [],
+  );
+  useEffect(
+    () => () => {
+      modelEngine.current?.dispose();
+      modelEngine.current = null;
+    },
+    [],
+  );
+  const onEvaluated = useCallback(
+    (id: string, result: EvaluatedMesh | null) => {
+      if (!result) {
+        setError(
+          t(
+            L(
+              "Не удалось вычислить модификаторы. Уменьшите число копий или подразделений; исходная геометрия сохранена.",
+              "Could not evaluate modifiers. Reduce copies or subdivision; the source geometry is preserved.",
+              "Модификаторлар есептелмеді. Көшірме не бөлу санын азайтыңыз; түпнұсқа геометрия сақталды.",
+            ),
+          ),
+        );
+        return;
+      }
+      const stats = {
+        ms: result.ms,
+        vertices: result.positions.length / 3,
+        triangles: result.indices.length / 3,
+        cacheBytes: result.cacheBytes,
+      };
+      evaluatedStats.current.set(id, stats);
+      if (selectedRef.current === id) setModelStats(stats);
+    },
+    [t],
+  );
   const cur = value.objects.find((o) => o.id === selected) ?? null;
+  useEffect(() => {
+    if (selected) {
+      const stats = evaluatedStats.current.get(selected);
+      if (stats) setModelStats(stats);
+    }
+  }, [selected]);
   const name = (kind: Obj["kind"]) =>
     t(
       kind === "box"
@@ -353,8 +413,7 @@ export function Editor3D({
   useEffect(() => {
     const incoming = JSON.stringify(value);
     if (incoming !== emitted.current) {
-      past.current = [];
-      future.current = [];
+      commands.current.reset(value);
       transaction.current = null;
       emitted.current = incoming;
       refresh();
@@ -363,6 +422,7 @@ export function Editor3D({
   const emit = (doc: SceneDoc) => {
     emitted.current = JSON.stringify(doc);
     current.current = doc;
+    commands.current.update(doc);
     onChange(doc);
   };
   function checked(doc: SceneDoc) {
@@ -393,29 +453,21 @@ export function Editor3D({
     return true;
   }
   function begin() {
-    transaction.current ??= structuredClone(current.current);
-  }
-  function finish() {
-    const before = transaction.current;
-    transaction.current = null;
-    if (before && JSON.stringify(before) !== JSON.stringify(current.current)) {
-      past.current = [...past.current.slice(-49), before];
-      future.current = [];
-      refresh();
+    if (!transaction.current) {
+      transaction.current = current.current;
+      commands.current.update(current.current);
+      commands.current.begin();
     }
   }
+  function finish() {
+    transaction.current = null;
+    if (commands.current.end()) refresh();
+  }
   function commit(doc: SceneDoc) {
-    if (
-      !checked(doc) ||
-      JSON.stringify(doc) === JSON.stringify(current.current)
-    )
-      return;
+    if (!checked(doc)) return;
     finish();
-    past.current = [
-      ...past.current.slice(-49),
-      structuredClone(current.current),
-    ];
-    future.current = [];
+    commands.current.update(current.current);
+    if (!commands.current.commit(doc)) return;
     emit(doc);
     setError("");
     refresh();
@@ -430,7 +482,7 @@ export function Editor3D({
         x.id === o.id ? { ...x, ...change } : x,
       ),
     };
-    if (checked(next)) emit(next);
+    emit(next);
   }
   function patch(change: Partial<Obj>) {
     if (cur && !cur.locked)
@@ -443,21 +495,13 @@ export function Editor3D({
   }
   function undo() {
     finish();
-    const previous = past.current.pop();
-    if (previous) {
-      future.current.push(structuredClone(current.current));
-      emit(previous);
-      refresh();
-    }
+    emit(commands.current.undo());
+    refresh();
   }
   function redo() {
     finish();
-    const next = future.current.pop();
-    if (next) {
-      past.current.push(structuredClone(current.current));
-      emit(next);
-      refresh();
-    }
+    emit(commands.current.redo());
+    refresh();
   }
   function add(kind: (typeof kinds)[number]) {
     if (current.current.objects.length >= 200) {
@@ -487,6 +531,42 @@ export function Editor3D({
     commit({ ...current.current, objects: [...current.current.objects, o] });
     select(o.id);
     setVertexMode(false);
+  }
+  function addModifier(type: ModelModifier["type"]) {
+    if (!cur || cur.locked || (cur.modifiers?.length ?? 0) >= 8) return;
+    const base = { id: crypto.randomUUID(), enabled: true };
+    const modifier: ModelModifier =
+      type === "mirror"
+        ? { ...base, type, axis: "x", offset: 0 }
+        : type === "array"
+          ? { ...base, type, count: 3, offset: [2, 0, 0] }
+          : type === "twist"
+            ? { ...base, type, axis: "y", angle: 90 }
+            : { ...base, type, levels: 1, smooth: true };
+    patch({ modifiers: [...(cur.modifiers ?? []), modifier] });
+    setVertexMode(false);
+  }
+  function changeModifier(
+    id: string,
+    change: Partial<ModelModifier>,
+    continuous = false,
+  ) {
+    if (!cur) return;
+    const modifiers = cur.modifiers?.map((m) =>
+      m.id === id ? ({ ...m, ...change } as ModelModifier) : m,
+    );
+    continuous ? live({ modifiers }) : patch({ modifiers });
+  }
+  function moveModifier(index: number, direction: number) {
+    if (!cur?.modifiers) return;
+    const modifiers = [...cur.modifiers];
+    const target = index + direction;
+    if (target < 0 || target >= modifiers.length) return;
+    [modifiers[index], modifiers[target]] = [
+      modifiers[target],
+      modifiers[index],
+    ];
+    patch({ modifiers });
   }
   function duplicate() {
     if (!cur || cur.locked) return;
@@ -533,14 +613,38 @@ export function Editor3D({
       });
     finish();
   }
-  function convert() {
+  async function convert() {
     if (!cur || cur.locked) return;
-    const data = editableGeometry(cur),
+    let evaluated: EvaluatedMesh;
+    try {
+      evaluated = await getEngine().evaluate(cur, true);
+    } catch {
+      setError(
+        t(
+          L(
+            "Применение превысит лимит редактируемой сетки: 10 000 вершин и 200 КБ. Уменьшите стек.",
+            "Baking exceeds editable mesh limits: 10,000 vertices and 200 KB. Reduce the stack.",
+            "Қолдану өңделетін тор шегінен асады: 10 000 төбе және 200 КБ. Стекті азайтыңыз.",
+          ),
+        ),
+      );
+      return;
+    }
+    const data = {
+        vertices: Array.from(evaluated.positions),
+        indices: Array.from(evaluated.indices),
+      },
       next = {
         ...current.current,
         objects: current.current.objects.map((o) =>
           o.id === cur.id
-            ? { ...o, ...data, kind: "mesh" as const, flat: true }
+            ? {
+                ...o,
+                ...data,
+                modifiers: undefined,
+                kind: "mesh" as const,
+                flat: true,
+              }
             : o,
         ),
       };
@@ -550,13 +654,15 @@ export function Editor3D({
     setVertexMode(true);
   }
   const baseGeometry = useMemo(
-    () => (cur ? geometryFor(cur) : null),
+    () => (cur ? baseGeometryFor(cur) : null),
     [cur?.kind, cur?.segments, cur?.vertices, cur?.indices],
   );
   useEffect(() => () => baseGeometry?.dispose(), [baseGeometry]);
-  const base = baseGeometry?.boundingBox?.getSize(new Vector3()).toArray() ?? [
-      1, 1, 1,
-    ],
+  const displayedGeometry =
+    selectedMesh?.name === cur?.id ? selectedMesh?.geometry : baseGeometry;
+  const base = displayedGeometry?.boundingBox
+      ?.getSize(new Vector3())
+      .toArray() ?? [1, 1, 1],
     count = (cur?.vertices?.length ?? 0) / 3,
     activeVertex = clamp(vertex, 0, Math.max(0, count - 1));
   useEffect(() => {
@@ -569,8 +675,8 @@ export function Editor3D({
         .toArray() as [number, number, number])
     : ([0, 0, 0] as [number, number, number]);
   function placeOnGround() {
-    if (!cur || cur.locked || !baseGeometry) return;
-    const positions = baseGeometry.getAttribute("position"),
+    if (!cur || cur.locked || !displayedGeometry) return;
+    const positions = displayedGeometry.getAttribute("position"),
       matrix = matrixFor(cur),
       point = new Vector3();
     let floor = Infinity;
@@ -606,7 +712,11 @@ export function Editor3D({
     setError("");
     try {
       if (file.size > 4_000_000) throw Error("SIZE");
-      const data = parseOBJ(await file.text()),
+      const parsed = await getEngine().parse(await file.text());
+      const data = {
+          vertices: Array.from(parsed.positions),
+          indices: Array.from(parsed.indices),
+        },
         o: Obj = {
           id: crypto.randomUUID(),
           kind: "mesh",
@@ -640,25 +750,14 @@ export function Editor3D({
   async function exportGeometry(format: "glb" | "obj") {
     setExporting(true);
     setError("");
-    let scene: ReturnType<typeof sceneForExport> | null = null;
     try {
-      scene = sceneForExport(current.current);
-      if (!scene.children.length) throw Error("EMPTY");
-      if (format === "glb") {
-        const { GLTFExporter } =
-          await import("three/examples/jsm/exporters/GLTFExporter.js");
-        const data = await new GLTFExporter().parseAsync(scene, {
-          binary: true,
-        });
+      const result = await getEngine().export(current.current, format);
+      if (format === "glb")
         download(
           "scene.glb",
-          new Blob([data as ArrayBuffer], { type: "model/gltf-binary" }),
+          new Blob([result.buffer!], { type: "model/gltf-binary" }),
         );
-      } else {
-        const { OBJExporter } =
-          await import("three/examples/jsm/exporters/OBJExporter.js");
-        download("scene.obj", new OBJExporter().parse(scene), "text/plain");
-      }
+      else download("scene.obj", result.text!, "text/plain");
     } catch {
       setError(
         t(
@@ -670,14 +769,6 @@ export function Editor3D({
         ),
       );
     } finally {
-      scene?.traverse((o) => {
-        if (o instanceof Mesh) {
-          o.geometry.dispose();
-          (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) =>
-            m.dispose(),
-          );
-        }
-      });
       setExporting(false);
     }
   }
@@ -786,7 +877,7 @@ export function Editor3D({
           <button
             className={btn}
             onClick={undo}
-            disabled={!past.current.length}
+            disabled={!commands.current.past.length}
             title="Ctrl / ⌘ Z"
           >
             <Undo2 size={14} />
@@ -795,7 +886,7 @@ export function Editor3D({
           <button
             className={btn}
             onClick={redo}
-            disabled={!future.current.length}
+            disabled={!commands.current.future.length}
             title="Ctrl / ⌘ Shift Z"
           >
             <Redo2 size={14} />
@@ -1063,6 +1154,24 @@ export function Editor3D({
             >
               {ortho ? "ORTHO" : "PERSP"}
             </button>
+            <select
+              aria-label={t(
+                L(
+                  "Координаты инструмента",
+                  "Transform space",
+                  "Құрал координаттары",
+                ),
+              )}
+              value={space}
+              onChange={(e) => setSpace(e.target.value as "world" | "local")}
+            >
+              <option value="world">
+                {t(L("Мировые", "World", "Әлемдік"))}
+              </option>
+              <option value="local">
+                {t(L("Локальные", "Local", "Жергілікті"))}
+              </option>
+            </select>
             <label className="model-check">
               <input
                 type="checkbox"
@@ -1079,6 +1188,7 @@ export function Editor3D({
             onPointerDown={() => root.current?.focus({ preventScroll: true })}
           >
             <Canvas
+              frameloop="demand"
               camera={{ position: [5, 4, 6], fov: 50 }}
               gl={{ preserveDrawingBuffer: true, antialias: true }}
               onCreated={(s) => {
@@ -1121,6 +1231,8 @@ export function Editor3D({
                     wireframe={!!value.wireframe}
                     onSelect={select}
                     register={register}
+                    engine={getEngine}
+                    onEvaluated={onEvaluated}
                   />
                 ))}
               {selectedMesh &&
@@ -1131,6 +1243,8 @@ export function Editor3D({
                   <TransformControls
                     object={selectedMesh}
                     mode={mode}
+                    space={space}
+                    size={0.85}
                     translationSnap={snap ? 0.25 : null}
                     rotationSnap={snap ? 15 * rad : null}
                     scaleSnap={snap ? 0.1 : null}
@@ -1381,7 +1495,7 @@ export function Editor3D({
                     </button>
                   </>
                 ) : (
-                  <button className={btn} onClick={convert}>
+                  <button className={btn} onClick={() => void convert()}>
                     {t(
                       L(
                         "Преобразовать в сетку",
@@ -1391,6 +1505,295 @@ export function Editor3D({
                     )}
                   </button>
                 )}
+              </fieldset>
+              <fieldset className="model-property-group" disabled={cur.locked}>
+                <legend>
+                  {t(L("Модификаторы", "Modifiers", "Модификаторлар"))}
+                </legend>
+                <div className="model-mod-add">
+                  {(["mirror", "array", "subdivide", "twist"] as const).map(
+                    (type) => (
+                      <button
+                        className={btn}
+                        key={type}
+                        disabled={(cur.modifiers?.length ?? 0) >= 8}
+                        onClick={() => addModifier(type)}
+                      >
+                        {t(
+                          {
+                            mirror: L("Зеркало", "Mirror", "Айна"),
+                            array: L("Массив", "Array", "Массив"),
+                            subdivide: L(
+                              "Подразделение",
+                              "Subdivision",
+                              "Бөлу",
+                            ),
+                            twist: L("Скручивание", "Twist", "Бұрау"),
+                          }[type],
+                        )}{" "}
+                        +
+                      </button>
+                    ),
+                  )}
+                </div>
+                {cur.modifiers?.map((m, i) => (
+                  <div
+                    className="model-modifier"
+                    key={m.id}
+                    data-modifier={m.type}
+                  >
+                    <div className="model-mod-header">
+                      <label className="model-check">
+                        <input
+                          type="checkbox"
+                          checked={m.enabled}
+                          aria-label={
+                            t(
+                              L(
+                                "Включить модификатор",
+                                "Enable modifier",
+                                "Модификаторды қосу",
+                              ),
+                            ) + ` ${i + 1}`
+                          }
+                          onChange={(e) =>
+                            changeModifier(m.id, { enabled: e.target.checked })
+                          }
+                        />
+                        {t(
+                          {
+                            mirror: L("Зеркало", "Mirror", "Айна"),
+                            array: L("Массив", "Array", "Массив"),
+                            subdivide: L(
+                              "Подразделение",
+                              "Subdivision",
+                              "Бөлу",
+                            ),
+                            twist: L("Скручивание", "Twist", "Бұрау"),
+                          }[m.type],
+                        )}
+                      </label>
+                      <button
+                        className={btn}
+                        disabled={!i}
+                        aria-label={
+                          t(
+                            L(
+                              "Модификатор выше",
+                              "Move modifier up",
+                              "Модификаторды жоғары жылжыту",
+                            ),
+                          ) + ` ${i + 1}`
+                        }
+                        onClick={() => moveModifier(i, -1)}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        className={btn}
+                        disabled={i === (cur.modifiers?.length ?? 0) - 1}
+                        aria-label={
+                          t(
+                            L(
+                              "Модификатор ниже",
+                              "Move modifier down",
+                              "Модификаторды төмен жылжыту",
+                            ),
+                          ) + ` ${i + 1}`
+                        }
+                        onClick={() => moveModifier(i, 1)}
+                      >
+                        ↓
+                      </button>
+                      <button
+                        className={btn}
+                        aria-label={
+                          t(
+                            L(
+                              "Удалить модификатор",
+                              "Remove modifier",
+                              "Модификаторды жою",
+                            ),
+                          ) + ` ${i + 1}`
+                        }
+                        onClick={() =>
+                          patch({
+                            modifiers: cur.modifiers?.filter(
+                              (x) => x.id !== m.id,
+                            ),
+                          })
+                        }
+                      >
+                        ×
+                      </button>
+                    </div>
+                    {(m.type === "mirror" || m.type === "twist") && (
+                      <label>
+                        {t(L("Ось", "Axis", "Ось"))}
+                        <select
+                          aria-label={
+                            t(
+                              L(
+                                "Ось модификатора",
+                                "Modifier axis",
+                                "Модификатор осі",
+                              ),
+                            ) + ` ${i + 1}`
+                          }
+                          value={m.axis}
+                          onChange={(e) =>
+                            changeModifier(m.id, {
+                              axis: e.target.value as "x" | "y" | "z",
+                            })
+                          }
+                        >
+                          <option value="x">X</option>
+                          <option value="y">Y</option>
+                          <option value="z">Z</option>
+                        </select>
+                      </label>
+                    )}
+                    {m.type === "mirror" && (
+                      <Numeric
+                        label={t(
+                          L("Смещение зеркала", "Mirror offset", "Айна ығысуы"),
+                        )}
+                        value={m.offset}
+                        onBegin={begin}
+                        onValue={(n) =>
+                          changeModifier(m.id, { offset: n }, true)
+                        }
+                        onEnd={finish}
+                      />
+                    )}
+                    {m.type === "twist" && (
+                      <Numeric
+                        label={t(
+                          L("Угол скручивания", "Twist angle", "Бұрау бұрышы"),
+                        )}
+                        value={m.angle}
+                        min={-360}
+                        max={360}
+                        step={1}
+                        onBegin={begin}
+                        onValue={(n) =>
+                          changeModifier(m.id, { angle: n }, true)
+                        }
+                        onEnd={finish}
+                      />
+                    )}
+                    {m.type === "array" && (
+                      <>
+                        <Numeric
+                          label={t(
+                            L("Число копий", "Copy count", "Көшірмелер саны"),
+                          )}
+                          value={m.count}
+                          min={2}
+                          max={20}
+                          step={1}
+                          onBegin={begin}
+                          onValue={(n) =>
+                            changeModifier(m.id, { count: Math.round(n) }, true)
+                          }
+                          onEnd={finish}
+                        />
+                        {["X", "Y", "Z"].map((axis, a) => (
+                          <Numeric
+                            key={axis}
+                            label={
+                              t(
+                                L("Шаг массива", "Array step", "Массив қадамы"),
+                              ) + ` ${axis}`
+                            }
+                            value={m.offset[a]}
+                            step={0.1}
+                            onBegin={begin}
+                            onValue={(n) => {
+                              const offset = [...m.offset] as [
+                                number,
+                                number,
+                                number,
+                              ];
+                              offset[a] = n;
+                              changeModifier(m.id, { offset }, true);
+                            }}
+                            onEnd={finish}
+                          />
+                        ))}
+                      </>
+                    )}
+                    {m.type === "subdivide" && (
+                      <>
+                        <Numeric
+                          label={t(
+                            L(
+                              "Уровни подразделения",
+                              "Subdivision levels",
+                              "Бөлу деңгейлері",
+                            ),
+                          )}
+                          value={m.levels}
+                          min={1}
+                          max={2}
+                          step={1}
+                          onBegin={begin}
+                          onValue={(n) =>
+                            changeModifier(
+                              m.id,
+                              { levels: Math.round(n) },
+                              true,
+                            )
+                          }
+                          onEnd={finish}
+                        />
+                        <label className="model-check">
+                          <input
+                            type="checkbox"
+                            checked={m.smooth}
+                            onChange={(e) =>
+                              changeModifier(m.id, { smooth: e.target.checked })
+                            }
+                          />
+                          {t(
+                            L(
+                              "Сглаживание Loop",
+                              "Loop smoothing",
+                              "Loop тегістеу",
+                            ),
+                          )}
+                        </label>
+                      </>
+                    )}
+                  </div>
+                ))}
+                {!!cur.modifiers?.length && (
+                  <button className={btn} onClick={() => void convert()}>
+                    {t(
+                      L(
+                        "Применить стек в сетку",
+                        "Bake stack to mesh",
+                        "Стекті торға қолдану",
+                      ),
+                    )}
+                  </button>
+                )}
+                <p className="model-small">
+                  {t(
+                    L(
+                      "Исходная геометрия сохраняется до применения стека.",
+                      "Source geometry is preserved until the stack is baked.",
+                      "Стек қолданылғанша түпнұсқа геометрия сақталады.",
+                    ),
+                  )}
+                </p>
+                <output
+                  className="model-small"
+                  data-testid="model-engine-status"
+                >
+                  {modelStats.vertices} {t(L("вершин", "vertices", "төбе"))} ·{" "}
+                  {modelStats.triangles} △ · {modelStats.ms.toFixed(1)} ms
+                </output>
               </fieldset>
               {vertexMode && cur.kind === "mesh" && (
                 <fieldset

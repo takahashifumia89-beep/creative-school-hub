@@ -95,6 +95,10 @@ export function summarizeStudioProject(
           metalness: o.metal,
           roughness: o.rough,
           locked: o.locked,
+          modifiers: o.modifiers?.map((m) => ({
+            type: m.type,
+            enabled: m.enabled,
+          })),
           vertexCount: o.vertices ? o.vertices.length / 3 : undefined,
         })),
       };
@@ -133,6 +137,8 @@ export function summarizeStudioProject(
           brightness: c.brightness,
           contrast: c.contrast,
           saturation: c.saturation,
+          keyframeCount: c.keyframes?.length ?? 0,
+          audioEQ: c.audioEQ,
         })),
         soundtrack: !!d.soundtrack,
         soundtrackVolume: d.soundtrack?.volume,

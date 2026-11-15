@@ -1,70 +1,58 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { CommandHistory } from "../engine/history";
+/** React only publishes snapshots; transaction storage and commands live in the core. */
 export function useMediaHistory<T>(value: T, onChange: (value: T) => void) {
+  const core = useRef<CommandHistory<T> | null>(null);
+  core.current ??= new CommandHistory(value, 50);
+  const h = core.current;
   const current = useRef(value);
   current.current = value;
-  const past = useRef<T[]>([]),
-    future = useRef<T[]>([]),
-    transaction = useRef<T | null>(null);
-  const [, version] = useState(0);
-  const different = (a: T, b: T) => JSON.stringify(a) !== JSON.stringify(b);
-  const push = (before: T) => {
-    past.current = [...past.current.slice(-49), structuredClone(before)];
-    future.current = [];
-    version((v) => v + 1);
-  };
-  const commit = (next: T) => {
-    if (different(current.current, next)) {
-      push(current.current);
-      current.current = next;
-      onChange(next);
+  const [, refresh] = useState(0);
+  useEffect(() => {
+    if (
+      value !== h.value &&
+      JSON.stringify(value) !== JSON.stringify(h.value)
+    ) {
+      h.reset(value);
+      refresh((n) => n + 1);
     }
-  };
-  const begin = () => {
-    transaction.current ??= structuredClone(current.current);
-  };
-  const update = (next: T) => {
-    if (transaction.current === null) {
-      commit(next);
-      return;
-    }
+  }, [value]);
+  const emit = (next: T) => {
     current.current = next;
     onChange(next);
-  };
-  const end = () => {
-    if (transaction.current !== null) {
-      if (different(transaction.current, current.current))
-        push(transaction.current);
-      transaction.current = null;
-    }
-  };
-  const undo = () => {
-    end();
-    const previous = past.current.pop();
-    if (previous) {
-      future.current.push(structuredClone(current.current));
-      current.current = previous;
-      onChange(previous);
-      version((v) => v + 1);
-    }
-  };
-  const redo = () => {
-    end();
-    const next = future.current.pop();
-    if (next) {
-      past.current.push(structuredClone(current.current));
-      current.current = next;
-      onChange(next);
-      version((v) => v + 1);
-    }
+    refresh((n) => n + 1);
   };
   return {
-    commit,
-    begin,
-    update,
-    end,
-    undo,
-    redo,
-    canUndo: past.current.length > 0,
-    canRedo: future.current.length > 0,
+    commit(next: T) {
+      h.update(current.current);
+      if (h.commit(next)) emit(h.value);
+    },
+    begin() {
+      if (!h.active) h.update(current.current);
+      h.begin();
+    },
+    update(next: T) {
+      if (h.active) {
+        h.update(next);
+        emit(next);
+      } else {
+        h.update(current.current);
+        if (h.commit(next)) emit(next);
+      }
+    },
+    end() {
+      if (h.end()) refresh((n) => n + 1);
+    },
+    cancel() {
+      emit(h.cancel());
+    },
+    undo() {
+      emit(h.undo());
+    },
+    redo() {
+      emit(h.redo());
+    },
+    canUndo: h.past.length > 0 || h.active,
+    canRedo: h.future.length > 0,
   };
 }

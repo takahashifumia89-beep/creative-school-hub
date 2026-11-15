@@ -1,6 +1,34 @@
 import { z } from "zod";
 const coordinate = z.number().finite().min(-10000).max(10000),
   color = z.string().regex(/^#[0-9a-f]{6}$/i);
+const modifierBase = { id: z.string().uuid(), enabled: z.boolean() };
+export const modifierSchema = z.discriminatedUnion("type", [
+  z.object({
+    ...modifierBase,
+    type: z.literal("mirror"),
+    axis: z.enum(["x", "y", "z"]),
+    offset: coordinate,
+  }),
+  z.object({
+    ...modifierBase,
+    type: z.literal("array"),
+    count: z.number().int().min(2).max(20),
+    offset: z.tuple([coordinate, coordinate, coordinate]),
+  }),
+  z.object({
+    ...modifierBase,
+    type: z.literal("subdivide"),
+    levels: z.number().int().min(1).max(2),
+    smooth: z.boolean(),
+  }),
+  z.object({
+    ...modifierBase,
+    type: z.literal("twist"),
+    axis: z.enum(["x", "y", "z"]),
+    angle: z.number().min(-360).max(360),
+  }),
+]);
+export type ModelModifier = z.infer<typeof modifierSchema>;
 export const modelObjectSchema = z
   .object({
     id: z.string().min(1).max(80),
@@ -25,6 +53,11 @@ export const modelObjectSchema = z
     metal: z.number().finite().min(0).max(1).optional(),
     rough: z.number().finite().min(0).max(1).optional(),
     flat: z.boolean().optional(),
+    modifiers: z
+      .array(modifierSchema)
+      .max(8)
+      .refine((ms) => new Set(ms.map((m) => m.id)).size === ms.length)
+      .optional(),
     vertices: z.array(coordinate).max(30000).optional(),
     indices: z.array(z.number().int().min(0).max(9999)).max(60000).optional(),
   })

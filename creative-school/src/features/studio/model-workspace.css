@@ -524,3 +524,58 @@
 .model-number > input {
   font-size: 12px;
 }
+.model-mod-add {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+.model-modifier {
+  border: 1px solid hsl(var(--border));
+  border-radius: 7px;
+  padding: 8px;
+  margin-top: 8px;
+  display: grid;
+  gap: 7px;
+}
+.model-mod-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.model-mod-header label {
+  flex: 1;
+}
+.model-mod-header button {
+  padding: 3px 6px;
+  min-height: 24px;
+}
+.model-workbench .precision-label {
+  gap: 4px;
+}
+.model-workbench .precision-scrub {
+  border: 0;
+  min-height: 22px;
+  padding: 0 4px;
+}
+.model-workbench .model-number > .precision-label {
+  display: flex;
+  white-space: normal;
+  overflow: visible;
+  align-items: center;
+  min-width: 0;
+}
+.model-workbench .precision-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 520px) {
+  .model-workbench .model-inspector {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .model-workbench .model-property-group {
+    width: 100%;
+  }
+  .model-workbench .model-number-grid {
+    gap: 8px;
+  }
+}

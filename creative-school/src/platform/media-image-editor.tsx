@@ -1,3 +1,6 @@
+import { useRafPointer, type PointerSample } from "./raf-pointer";
+import { ImageEngine, type ImageFrame } from "../engine/image-client";
+import { PrecisionNumber } from "./PrecisionNumber";
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import type { z } from "zod";
 import type { imageSchema } from "./schema";
@@ -8,7 +11,6 @@ import {
   imageGeometry,
   normalizeCrop,
   presetCrop,
-  renderImage,
   type CropRect,
 } from "./media-image";
 import {
@@ -38,7 +40,16 @@ export default function ImageWorkbench({
     stage = useRef<HTMLDivElement>(null),
     viewport = useRef<HTMLDivElement>(null),
     [viewportSize, setViewportSize] = useState({ width: 800, height: 520 }),
-    [source, setSource] = useState<HTMLImageElement | null>(null),
+    [source, setSource] = useState<{ width: number; height: number } | null>(
+      null,
+    ),
+    [exporting, setExporting] = useState(false),
+    [renderInfo, setRenderInfo] = useState({
+      ms: 0,
+      renderer: "",
+      width: 0,
+      height: 0,
+    }),
     [error, setError] = useState(""),
     [compare, setCompare] = useState(false),
     [cropping, setCropping] = useState(false),
@@ -51,6 +62,62 @@ export default function ImageWorkbench({
     activeSource = useRef(""),
     latest = useRef(value);
   latest.current = value;
+  const engine = useRef<ImageEngine | null>(null),
+    histogram = useRef<HTMLCanvasElement>(null),
+    previewGeneration = useRef(0),
+    sourceRequest = useRef(0);
+  const getEngine = () => (engine.current ??= new ImageEngine());
+  useEffect(
+    () => () => {
+      previewGeneration.current++;
+      sourceRequest.current++;
+      engine.current?.dispose();
+      engine.current = null;
+    },
+    [],
+  );
+  function showFrame(frame: ImageFrame) {
+    try {
+      const c = canvas.current;
+      if (c) {
+        if (c.width !== frame.width) c.width = frame.width;
+        if (c.height !== frame.height) c.height = frame.height;
+        c.getContext("2d")!.drawImage(frame.bitmap, 0, 0);
+      }
+      const h = histogram.current,
+        ctx = h?.getContext("2d");
+      if (h && ctx) {
+        ctx.clearRect(0, 0, h.width, h.height);
+        let peak = 1;
+        for (let i = 0; i < 768; i++) peak = Math.max(peak, frame.histogram[i]);
+        for (let channel = 0; channel < 3; channel++) {
+          ctx.beginPath();
+          ctx.moveTo(0, h.height);
+          for (let i = 0; i < 256; i++)
+            ctx.lineTo(
+              (i * h.width) / 255,
+              h.height -
+                Math.sqrt(frame.histogram[channel * 256 + i] / peak) * h.height,
+            );
+          ctx.lineTo(h.width, h.height);
+          ctx.fillStyle = [
+            "rgba(225,90,80,.45)",
+            "rgba(110,170,75,.4)",
+            "rgba(80,140,220,.4)",
+          ][channel];
+          ctx.fill();
+        }
+      }
+      setRenderInfo({
+        ms: frame.ms,
+        renderer: frame.renderer,
+        width: frame.width,
+        height: frame.height,
+      });
+    } finally {
+      frame.bitmap.close();
+    }
+  }
   const geometry = source
       ? imageGeometry(source.width, source.height, value)
       : null,
@@ -104,55 +171,78 @@ export default function ImageWorkbench({
       return;
     }
     if (activeSource.current === value.assetId) return;
-    const url = assets.urls[value.assetId];
-    if (!url) {
+    const blob = assets.sources[value.assetId];
+    if (!blob) {
       setSource(null);
       return;
     }
     let active = true;
-    const img = new Image();
-    img.onload = () => {
-      if (active) {
-        setSource(img);
-        activeSource.current = value.assetId!;
-        setError("");
-      }
-    };
-    img.onerror = () => {
-      if (active)
-        setError(
-          t(
-            L(
-              "Не удалось прочитать источник. Выберите файл снова.",
-              "Could not read source. Relink the file.",
-              "Түпнұсқа оқылмады. Файлды қайта таңдаңыз.",
+    const ticket = ++sourceRequest.current;
+    setSource(null);
+    void getEngine()
+      .load(blob)
+      .then((size) => {
+        if (active && ticket === sourceRequest.current) {
+          setSource(size);
+          activeSource.current = value.assetId!;
+          setError("");
+        }
+      })
+      .catch(() => {
+        if (active && ticket === sourceRequest.current)
+          setError(
+            t(
+              L(
+                "Не удалось прочитать источник. Выберите файл снова.",
+                "Could not read source. Relink the file.",
+                "Түпнұсқа оқылмады. Файлды қайта таңдаңыз.",
+              ),
             ),
-          ),
-        );
-    };
-    img.src = url;
+          );
+      });
     return () => {
       active = false;
     };
-  }, [value.assetId, assets.urls]);
+  }, [value.assetId, assets.sources]);
   useEffect(() => {
-    if (!canvas.current) return;
-    if (!source) {
-      canvas.current.width = 800;
-      canvas.current.height = 500;
-      return;
-    }
-    renderImage(
-      canvas.current,
-      source,
-      cropping ? { ...value, exportWidth: undefined } : value,
-      {
-        compare,
-        maxPreview: 1400,
-        ignoreCrop: cropping,
-      },
-    );
+    if (!source) return;
+    const generation = ++previewGeneration.current;
+    const frame = requestAnimationFrame(() => {
+      void getEngine()
+        .preview(
+          cropping ? { ...value, exportWidth: undefined } : value,
+          compare,
+          cropping,
+        )
+        .then((result) => {
+          if (generation !== previewGeneration.current) {
+            result.bitmap.close();
+            return;
+          }
+          showFrame(result);
+        })
+        .catch((e) => {
+          if (
+            generation === previewGeneration.current &&
+            e.message !== "SUPERSEDED"
+          )
+            setError(
+              t(
+                L(
+                  "Обработка изображения не удалась. Откройте исходник снова.",
+                  "Image processing failed. Reopen the source.",
+                  "Суретті өңдеу орындалмады. Түпнұсқаны қайта ашыңыз.",
+                ),
+              ),
+            );
+        });
+    });
+    return () => {
+      previewGeneration.current++;
+      cancelAnimationFrame(frame);
+    };
   }, [source, value, compare, cropping]);
+
   async function load(file?: File) {
     if (!file) return;
     if (
@@ -170,23 +260,23 @@ export default function ImageWorkbench({
       );
       return;
     }
+    const ticket = ++sourceRequest.current,
+      previous = source;
     setLoading(true);
+    setSource(null);
     setError("");
-    const url = URL.createObjectURL(file);
     try {
-      const img = await new Promise<HTMLImageElement>((ok, no) => {
-        const im = new Image();
-        im.onload = () => ok(im);
-        im.onerror = () => no(Error("DECODE"));
-        im.src = url;
-      });
-      if (img.width * img.height > 40000000) throw Error("PIXELS");
+      const img = await getEngine().load(file);
+      if (ticket !== sourceRequest.current) return;
       const asset = await assets.add(file);
+      if (ticket !== sourceRequest.current) return;
       activeSource.current = asset.id;
       setSource(img);
       history.commit({ ...value, assetId: asset.id, filename: file.name });
       setZoom(100);
     } catch (e) {
+      if (ticket !== sourceRequest.current) return;
+      setSource(previous);
       setError(
         t(
           (e as Error).message === "PIXELS"
@@ -203,11 +293,10 @@ export default function ImageWorkbench({
         ),
       );
     } finally {
-      URL.revokeObjectURL(url);
-      setLoading(false);
+      if (ticket === sourceRequest.current) setLoading(false);
     }
   }
-  function point(e: PointerEvent) {
+  function point(e: Pick<PointerSample, "clientX" | "clientY">) {
     const r = stage.current!.getBoundingClientRect();
     return {
       x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
@@ -222,7 +311,7 @@ export default function ImageWorkbench({
     gesture.current = { ...point(e), rect: structuredClone(crop), mode };
     stage.current?.setPointerCapture(e.pointerId);
   }
-  function move(e: PointerEvent) {
+  function move(e: PointerSample) {
     const g = gesture.current;
     if (!g) return;
     const p = point(e),
@@ -263,7 +352,9 @@ export default function ImageWorkbench({
       cropRect: normalizeCrop(next),
     });
   }
+  const cropPointer = useRafPointer(move);
   function end() {
+    cropPointer.flush();
     if (gesture.current) {
       gesture.current = null;
       history.end();
@@ -283,6 +374,12 @@ export default function ImageWorkbench({
       flipY: false,
       sepia: 0,
       blur: 0,
+      linearColor: false,
+      exposure: 0,
+      temperature: 0,
+      tint: 0,
+      vignette: 0,
+      toneMap: "none",
       exportWidth: undefined,
     });
     setCompare(false);
@@ -290,29 +387,15 @@ export default function ImageWorkbench({
   async function exportImage() {
     if (!source) return;
     setError("");
-    const output = document.createElement("canvas");
+    setExporting(true);
     try {
-      renderImage(output, source, value);
-      if (format === "jpeg") {
-        const ctx = output.getContext("2d")!;
-        ctx.globalCompositeOperation = "destination-over";
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, output.width, output.height);
-        ctx.globalCompositeOperation = "source-over";
-      }
-      const blob = await new Promise<Blob>((ok, no) =>
-          output.toBlob(
-            (b) => (b ? ok(b) : no(Error())),
-            `image/${format}`,
-            quality,
-          ),
-        ),
-        ext =
-          blob.type === "image/png"
-            ? "png"
-            : blob.type === "image/webp"
-              ? "webp"
-              : "jpg";
+      const { blob } = await getEngine().export(value, format, quality);
+      const ext =
+        blob.type === "image/png"
+          ? "png"
+          : blob.type === "image/webp"
+            ? "webp"
+            : "jpg";
       download(
         `${value.filename.replace(/\.[^.]+$/, "") || "image"}-edited.${ext}`,
         blob,
@@ -328,8 +411,7 @@ export default function ImageWorkbench({
         ),
       );
     } finally {
-      output.width = 1;
-      output.height = 1;
+      setExporting(false);
     }
   }
   return (
@@ -385,11 +467,13 @@ export default function ImageWorkbench({
           {t(L("До / после", "Before / after", "Бұрын / кейін"))}
         </button>
         <button
-          disabled={!source}
+          disabled={!source || exporting}
           className="media-primary"
           onClick={() => void exportImage()}
         >
-          {format.toUpperCase()} ↓
+          {exporting
+            ? t(L("Экспорт…", "Exporting…", "Экспорт…"))
+            : `${format.toUpperCase()} ↓`}
         </button>
       </div>
       <CacheStatus assets={assets} ids={ids} t={t} />
@@ -410,7 +494,7 @@ export default function ImageWorkbench({
                 ref={stage}
                 style={{ width: `${(fitWidth * zoom) / 100}px` }}
                 onPointerDown={(e) => start(e, "draw")}
-                onPointerMove={move}
+                onPointerMove={cropPointer.move}
                 onPointerUp={end}
                 onPointerCancel={end}
               >
@@ -535,8 +619,9 @@ export default function ImageWorkbench({
           </label>
           <div className="media-two">
             {(["x", "y", "w", "h"] as const).map((field, i) => (
-              <label key={field}>
-                {t(
+              <PrecisionNumber
+                key={field}
+                label={t(
                   [
                     L("X, %", "X, %", "X, %"),
                     L("Y, %", "Y, %", "Y, %"),
@@ -544,25 +629,21 @@ export default function ImageWorkbench({
                     L("Высота, %", "Height, %", "Биіктігі, %"),
                   ][i],
                 )}
-                <input
-                  type="number"
-                  min={field === "w" || field === "h" ? 1 : 0}
-                  max={100}
-                  step={0.1}
-                  disabled={!source}
-                  value={+(crop[field] * 100).toFixed(1)}
-                  onChange={(e) =>
-                    history.commit({
-                      ...value,
-                      crop: "original",
-                      cropRect: normalizeCrop({
-                        ...crop,
-                        [field]: +e.target.value / 100,
-                      }),
-                    })
-                  }
-                />
-              </label>
+                min={field === "w" || field === "h" ? 1 : 0}
+                max={100}
+                step={0.1}
+                disabled={!source}
+                value={+(crop[field] * 100).toFixed(1)}
+                onBegin={history.begin}
+                onEnd={history.end}
+                onValue={(n) =>
+                  history.update({
+                    ...latest.current,
+                    crop: "original",
+                    cropRect: normalizeCrop({ ...crop, [field]: n / 100 }),
+                  })
+                }
+              />
             ))}
           </div>
           <div className="media-two">
@@ -596,6 +677,16 @@ export default function ImageWorkbench({
               {t(L("Сбросить", "Reset", "Қалпына келтіру"))}
             </button>
           </div>
+          <h3>{t(L("Гистограмма", "Histogram", "Гистограмма"))}</h3>
+          <canvas
+            ref={histogram}
+            className="media-histogram"
+            width={256}
+            height={80}
+            aria-label={t(
+              L("RGB-гистограмма", "RGB histogram", "RGB гистограммасы"),
+            )}
+          />
           <h3>{t(L("Коррекция", "Adjustments", "Түзету"))}</h3>
           {(
             ["brightness", "contrast", "saturation", "sepia", "blur"] as const
@@ -633,6 +724,76 @@ export default function ImageWorkbench({
             />
             {t(L("Чёрно-белый", "Grayscale", "Ақ-қара"))}
           </label>
+          <h3>{t(L("Свет и цвет", "Light and color", "Жарық пен түс"))}</h3>
+          <label className="media-check">
+            <input
+              type="checkbox"
+              disabled={!source}
+              checked={!!value.linearColor}
+              onChange={(e) =>
+                history.commit({ ...value, linearColor: e.target.checked })
+              }
+            />
+            {t(
+              L(
+                "Линейная цветокоррекция",
+                "Linear color adjustments",
+                "Сызықтық түсті түзету",
+              ),
+            )}
+          </label>
+          {(["exposure", "temperature", "tint", "vignette"] as const).map(
+            (field, i) => (
+              <Slider
+                key={field}
+                label={t(
+                  [
+                    L("Экспозиция, EV", "Exposure, EV", "Экспозиция, EV"),
+                    L("Температура", "Temperature", "Температура"),
+                    L("Оттенок", "Tint", "Реңк"),
+                    L("Виньетка", "Vignette", "Виньетка"),
+                  ][i],
+                )}
+                value={value[field] ?? 0}
+                min={
+                  field === "exposure" ? -4 : field === "vignette" ? 0 : -100
+                }
+                max={field === "exposure" ? 4 : 100}
+                step={field === "exposure" ? 0.1 : 1}
+                disabled={!source}
+                onBegin={history.begin}
+                onEnd={history.end}
+                onChange={(n) =>
+                  history.update({ ...latest.current, [field]: n })
+                }
+              />
+            ),
+          )}
+          <label>
+            {t(L("Тоновое отображение", "Tone mapping", "Тонды бейнелеу"))}
+            <select
+              aria-label={t(
+                L("Тоновое отображение", "Tone mapping", "Тонды бейнелеу"),
+              )}
+              value={value.toneMap ?? "none"}
+              disabled={!source}
+              onChange={(e) =>
+                history.commit({
+                  ...value,
+                  toneMap: e.target.value as "none" | "aces",
+                })
+              }
+            >
+              <option value="none">
+                {t(L("Стандартное", "Standard", "Стандартты"))}
+              </option>
+              <option value="aces">Filmic · ACES curve</option>
+            </select>
+          </label>
+          <p className="media-muted" data-testid="image-engine-status">
+            {renderInfo.renderer}
+            {renderInfo.renderer ? ` · ${Math.round(renderInfo.ms)} ms` : ""}
+          </p>
           <h3>{t(L("Экспорт", "Export", "Экспорт"))}</h3>
           <label>
             {t(L("Ширина экспорта, px", "Export width, px", "Экспорт ені, px"))}
