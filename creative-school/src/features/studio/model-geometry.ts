@@ -1,11 +1,18 @@
 import {
+  evaluateModifiers,
+  meshNormals,
+  type MeshBuffers,
+} from "@/engine/mesh";
+import {
   BoxGeometry,
   SphereGeometry,
   ConeGeometry,
   TorusGeometry,
   CylinderGeometry,
   BufferGeometry,
+  BufferAttribute,
   Float32BufferAttribute,
+  Uint32BufferAttribute,
   Mesh,
   MeshStandardMaterial,
   Scene,
@@ -29,7 +36,7 @@ export function matrixFor(o: Obj) {
     new Vector3(s[0] * o.scale, s[1] * o.scale, s[2] * o.scale),
   );
 }
-export function geometryFor(o: Obj): BufferGeometry {
+export function baseGeometryFor(o: Obj): BufferGeometry {
   const n = Math.min(
     64,
     Math.max(3, Math.round(o.segments ?? (o.kind === "torus" ? 48 : 32))),
@@ -59,6 +66,35 @@ export function geometryFor(o: Obj): BufferGeometry {
   g.computeBoundingBox();
   return g;
 }
+export function geometryFromBuffers(mesh: MeshBuffers) {
+  const g = new BufferGeometry();
+  g.setAttribute("position", new BufferAttribute(mesh.positions, 3));
+  g.setIndex(new BufferAttribute(mesh.indices, 1));
+  g.setAttribute(
+    "normal",
+    new BufferAttribute(mesh.normals ?? meshNormals(mesh), 3),
+  );
+  g.computeBoundingBox();
+  g.computeBoundingSphere();
+  return g;
+}
+export function geometryFor(o: Obj): BufferGeometry {
+  const base = baseGeometryFor(o);
+  if (!o.modifiers?.some((m) => m.enabled)) return base;
+  const p = base.getAttribute("position"),
+    ix = base.getIndex(),
+    source: MeshBuffers = {
+      positions: Float32Array.from(p.array),
+      indices: ix
+        ? Uint32Array.from(ix.array)
+        : Uint32Array.from({ length: p.count }, (_, i) => i),
+    };
+  try {
+    return geometryFromBuffers(evaluateModifiers(source, o.modifiers));
+  } finally {
+    base.dispose();
+  }
+}
 export function editableGeometry(o: Obj): Pick<Obj, "vertices" | "indices"> {
   const g = geometryFor(o),
     p = g.getAttribute("position"),
@@ -87,22 +123,40 @@ export function editableGeometry(o: Obj): Pick<Obj, "vertices" | "indices"> {
 }
 export function sceneForExport(doc: SceneDoc) {
   const scene = new Scene();
-  for (const o of doc.objects.filter((o) => !o.hidden)) {
-    const mesh = new Mesh(
-      geometryFor(o),
-      new MeshStandardMaterial({
-        color: o.color,
-        metalness: o.metal ?? 0.1,
-        roughness: o.rough ?? 0.5,
-        flatShading: o.flat ?? false,
-      }),
-    );
-    mesh.name = (o.name || o.kind).replace(/[\r\n\t#]/g, " ").trim() || o.kind;
-    mesh.applyMatrix4(matrixFor(o));
-    scene.add(mesh);
+  let vertices = 0,
+    indices = 0;
+  try {
+    for (const o of doc.objects.filter((o) => !o.hidden)) {
+      const mesh = new Mesh(
+        geometryFor(o),
+        new MeshStandardMaterial({
+          color: o.color,
+          metalness: o.metal ?? 0.1,
+          roughness: o.rough ?? 0.5,
+          flatShading: o.flat ?? false,
+        }),
+      );
+      vertices += mesh.geometry.getAttribute("position").count;
+      indices += mesh.geometry.getIndex()?.count ?? 0;
+      if (vertices > 1_000_000 || indices > 3_000_000) {
+        mesh.geometry.dispose();
+        (mesh.material as MeshStandardMaterial).dispose();
+        throw Error("SCENE_EXPORT_BUDGET");
+      }
+      mesh.name =
+        (o.name || o.kind).replace(/[\r\n\t#]/g, " ").trim() || o.kind;
+      mesh.applyMatrix4(matrixFor(o));
+      scene.add(mesh);
+    }
+    scene.updateMatrixWorld(true);
+    return scene;
+  } catch (error) {
+    scene.traverse((o: any) => {
+      o.geometry?.dispose();
+      o.material?.dispose();
+    });
+    throw error;
   }
-  scene.updateMatrixWorld(true);
-  return scene;
 }
 /** Geometry only: never loads mtllib, textures or remote references. */
 export function parseOBJ(source: string): Pick<Obj, "vertices" | "indices"> {

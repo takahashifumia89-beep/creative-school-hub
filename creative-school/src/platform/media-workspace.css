@@ -483,3 +483,15 @@
 .media-monitor > .media-preview-canvas + .media-empty strong {
   color: #fff;
 }
+.media-histogram{display:block;width:100%;height:80px;background:hsl(var(--background));border:1px solid var(--media-line);border-radius:6px}
+.media-keyframe-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0}
+.media-keyframe-row button{padding:4px 7px;min-height:28px}
+.media-slider{font-size:11px;min-width:0}.media-slider-heading{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:4px}.media-slider-heading>span{min-width:0;flex:1}
+.media-wide meter{display:block;width:100%;height:9px;margin:5px 0}
+
+.media-frame-code {
+  display: block;
+  font-size: 10px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}

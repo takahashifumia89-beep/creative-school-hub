@@ -51,3 +51,5 @@ Keep production backups enabled and verify the D1 binding/database ID in `wrangl
 See [the architecture and limits](creative-school/docs/PLATFORM.md) for supported formats, recovery behavior, security boundaries and remaining work. This repository does not claim feature parity with desktop creative suites.
 
 Course references and access notes are listed in [SOURCES.md](creative-school/docs/SOURCES.md). Lesson explanations and examples are original teaching material; linked external articles and videos retain their publishers' terms.
+
+Editor engine details: [worker processing, precision controls, animation and modifier stacks](creative-school/docs/EDITOR_ENGINE.md).

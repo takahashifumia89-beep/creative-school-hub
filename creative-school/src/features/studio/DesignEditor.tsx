@@ -1,3 +1,7 @@
+import { CommandHistory } from "@/engine/history";
+import { useRafPointer, type PointerSample } from "@/platform/raf-pointer";
+import { createContext, useContext } from "react";
+import { PrecisionNumber } from "@/platform/PrecisionNumber";
 import {
   useCallback,
   useEffect,
@@ -76,7 +80,17 @@ const button = "dw-button",
   MAX_SHAPES = 500;
 type Point = { x: number; y: number };
 type Gesture =
-  | { mode: "move"; before: DesignDoc; origin: Point; ids: string[]; box: Box }
+  | {
+      mode: "move";
+      before: DesignDoc;
+      origin: Point;
+      ids: string[];
+      box: Box;
+      xs: Float64Array;
+      ys: Float64Array;
+      edgesX: Float64Array;
+      edgesY: Float64Array;
+    }
   | {
       mode: "resize";
       before: DesignDoc;
@@ -93,6 +107,10 @@ type Gesture =
     }
   | { mode: "marquee"; origin: Point; added: string[] }
   | { mode: "pan"; origin: Point; left: number; top: number };
+const NumberContext = createContext<{
+  begin: () => void;
+  end: () => void;
+} | null>(null);
 function NumberField({
   label,
   value,
@@ -110,51 +128,25 @@ function NumberField({
   disabled?: boolean;
   onCommit: (n: number) => void;
 }) {
-  const [draft, setDraft] = useState(String(round(value))),
-    focused = useRef(false),
-    cancelled = useRef(false);
-  useEffect(() => {
-    if (!focused.current) setDraft(String(round(value)));
-  }, [value]);
+  const context = useContext(NumberContext);
   return (
-    <label>
-      {label}
-      <input
-        className="dw-input"
-        type="number"
-        inputMode="decimal"
-        min={min}
-        max={max}
-        step={step}
-        disabled={disabled}
-        value={draft}
-        onFocus={() => {
-          focused.current = true;
-          cancelled.current = false;
-        }}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => {
-          focused.current = false;
-          const n = Number(draft);
-          if (!cancelled.current && draft.trim() && Number.isFinite(n))
-            onCommit(round(clamp(n, min, max)));
-          else setDraft(String(round(value)));
-          cancelled.current = false;
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            e.currentTarget.blur();
-          }
-          if (e.key === "Escape") {
-            cancelled.current = true;
-            e.currentTarget.blur();
-          }
-        }}
-      />
-    </label>
+    <PrecisionNumber
+      onBegin={context?.begin}
+      onValue={context ? onCommit : undefined}
+      onEnd={context?.end}
+      label={label}
+      value={value}
+      min={min}
+      max={max}
+      step={step}
+      disabled={disabled}
+      className="dw-number"
+      inputClassName="dw-input"
+      onCommit={context ? undefined : onCommit}
+    />
   );
 }
+
 export function DesignEditor({
   value,
   onChange,
@@ -172,15 +164,14 @@ export function DesignEditor({
     svg = useRef<SVGSVGElement>(null);
   const current = useRef(value);
   current.current = value;
-  const history = useRef<{ past: DesignDoc[]; future: DesignDoc[] }>({
-      past: [],
-      future: [],
-    }),
+  const history = useRef<CommandHistory<DesignDoc>>(null!),
+    numberLive = useRef(false),
     transaction = useRef<DesignDoc | null>(null),
     gesture = useRef<Gesture | null>(null),
     clipboard = useRef<Shape[]>([]),
     zoomAnchor = useRef<{ point: Point; client: Point } | null>(null),
     marqueeRef = useRef<Box | null>(null);
+  history.current ??= new CommandHistory(value, 80);
   const [historyVersion, setHistoryVersion] = useState(0),
     [clipboardVersion, setClipboardVersion] = useState(0),
     [ids, setIds] = useState<string[]>([]),
@@ -254,49 +245,53 @@ export function DesignEditor({
       : typeLabel(s.type));
   const apply = (doc: DesignDoc) => {
     current.current = doc;
+    history.current.update(doc);
     onChange(doc);
   };
   const finish = () => {
-    const before = transaction.current;
     transaction.current = null;
-    if (before && !sameDocument(before, current.current)) {
-      history.current.past = [...history.current.past.slice(-79), before];
-      history.current.future = [];
-      setHistoryVersion((n) => n + 1);
-    }
+    if (history.current.end()) setHistoryVersion((n) => n + 1);
   };
   const begin = () => {
-    if (!transaction.current) transaction.current = current.current;
+    if (!transaction.current) {
+      transaction.current = current.current;
+      history.current.update(current.current);
+      history.current.begin();
+    }
   };
   const commit = (doc: DesignDoc) => {
+    if (numberLive.current) {
+      apply(doc);
+      return;
+    }
     finish();
-    if (sameDocument(doc, current.current)) return;
-    history.current.past = [
-      ...history.current.past.slice(-79),
-      current.current,
-    ];
-    history.current.future = [];
+    history.current.update(current.current);
+    if (!history.current.commit(doc)) return;
     apply(doc);
     setHistoryVersion((n) => n + 1);
     setError("");
   };
   const undo = () => {
     finish();
-    const before = history.current.past.pop();
-    if (!before) return;
-    history.current.future.push(current.current);
-    apply(before);
+    apply(history.current.undo());
     setInline(null);
     setHistoryVersion((n) => n + 1);
   };
   const redo = () => {
     finish();
-    const after = history.current.future.pop();
-    if (!after) return;
-    history.current.past.push(current.current);
-    apply(after);
+    apply(history.current.redo());
     setInline(null);
     setHistoryVersion((n) => n + 1);
+  };
+  const numericControls = {
+    begin: () => {
+      begin();
+      numberLive.current = true;
+    },
+    end: () => {
+      numberLive.current = false;
+      finish();
+    },
   };
   const patch = (change: Partial<Shape>, live = false) => {
     const doc = current.current,
@@ -405,14 +400,56 @@ export function DesignEditor({
       window.removeEventListener("blur", blur);
     };
   }, []);
-  const select = (id: string, add = false) =>
+  const groupMembers = (id: string) => {
+    const s = current.current.shapes.find((s) => s.id === id);
+    return s?.groupId
+      ? current.current.shapes
+          .filter((x) => x.groupId === s.groupId && !x.hidden)
+          .map((x) => x.id)
+      : [id];
+  };
+  const select = (id: string, add = false) => {
+    const members = groupMembers(id);
     setIds((old) =>
       add
-        ? old.includes(id)
-          ? old.filter((x) => x !== id)
-          : [...old, id]
-        : [id],
+        ? members.every((id) => old.includes(id))
+          ? old.filter((id) => !members.includes(id))
+          : [...new Set([...old, ...members])]
+        : members,
     );
+  };
+  const group = () => {
+    const chosen = current.current.shapes.filter(
+      (s) => ids.includes(s.id) && !s.locked,
+    );
+    if (chosen.length < 2) return;
+    const groupId = crypto.randomUUID();
+    commit({
+      ...current.current,
+      shapes: current.current.shapes.map((s) =>
+        chosen.includes(s) ? { ...s, groupId } : s,
+      ),
+    });
+  };
+  const ungroup = () =>
+    commit({
+      ...current.current,
+      shapes: current.current.shapes.map((s) =>
+        ids.includes(s.id) && !s.locked ? { ...s, groupId: undefined } : s,
+      ),
+    });
+  const remapGroups = (shapes: Shape[]) => {
+    const groups = new Map<string, string>();
+    return shapes.map((s) => {
+      if (!s.groupId) return s;
+      let groupId = groups.get(s.groupId);
+      if (!groupId) {
+        groupId = crypto.randomUUID();
+        groups.set(s.groupId, groupId);
+      }
+      return { ...s, groupId };
+    });
+  };
   const point = (e: { clientX: number; clientY: number }) => {
     const r = svg.current!.getBoundingClientRect();
     return {
@@ -465,7 +502,11 @@ export function DesignEditor({
       select(s.id, true);
       return;
     }
-    const nextIds = ids.includes(s.id) ? ids : [s.id];
+    const nextIds = ids.includes(s.id)
+      ? ids
+      : e.altKey
+        ? [s.id]
+        : groupMembers(s.id);
     setIds(nextIds);
     setPanel("properties");
     if (s.locked) return;
@@ -475,9 +516,30 @@ export function DesignEditor({
       ),
       box = boundsOf(moving);
     if (!box) return;
+    const others = doc.shapes.filter(
+        (s) => !nextIds.includes(s.id) && !s.hidden,
+      ),
+      xs = new Float64Array(3 + others.length * 3),
+      ys = new Float64Array(3 + others.length * 3);
+    xs.set([0, W / 2, W]);
+    ys.set([0, H / 2, H]);
+    for (let i = 0; i < others.length; i++) {
+      const b = visualBounds(others[i]),
+        at = 3 + i * 3;
+      xs[at] = b.x;
+      xs[at + 1] = b.x + b.w / 2;
+      xs[at + 2] = b.x + b.w;
+      ys[at] = b.y;
+      ys[at + 1] = b.y + b.h / 2;
+      ys[at + 2] = b.y + b.h;
+    }
     begin();
     gesture.current = {
       mode: "move",
+      xs,
+      ys,
+      edgesX: new Float64Array([box.x, box.x + box.w / 2, box.x + box.w]),
+      edgesY: new Float64Array([box.y, box.y + box.h / 2, box.y + box.h]),
       before: doc,
       origin: point(e),
       ids: moving.map((x) => x.id),
@@ -524,7 +586,7 @@ export function DesignEditor({
     };
     capture(e);
   };
-  const move = (e: ReactPointerEvent) => {
+  const move = (e: PointerSample) => {
     const g = gesture.current;
     if (!g) return;
     if (g.mode === "pan") {
@@ -557,31 +619,12 @@ export function DesignEditor({
       if (snap && !e.altKey) {
         dx = Math.round((g.box.x + dx) / spacing) * spacing - g.box.x;
         dy = Math.round((g.box.y + dy) / spacing) * spacing - g.box.y;
-        const other = g.before.shapes
-            .filter((s) => !g.ids.includes(s.id) && !s.hidden)
-            .map(visualBounds),
-          xs = [
-            0,
-            W / 2,
-            W,
-            ...other.flatMap((b) => [b.x, b.x + b.w / 2, b.x + b.w]),
-          ],
-          ys = [
-            0,
-            H / 2,
-            H,
-            ...other.flatMap((b) => [b.y, b.y + b.h / 2, b.y + b.h]),
-          ];
         let bestX = 5 / zoom,
           bestY = 5 / zoom,
           adjustX = 0,
           adjustY = 0;
-        for (const x of xs)
-          for (const edge of [
-            g.box.x,
-            g.box.x + g.box.w / 2,
-            g.box.x + g.box.w,
-          ]) {
+        for (const x of g.xs)
+          for (const edge of g.edgesX) {
             const delta = x - (edge + dx);
             if (Math.abs(delta) < bestX) {
               bestX = Math.abs(delta);
@@ -589,12 +632,8 @@ export function DesignEditor({
               lines.x = x;
             }
           }
-        for (const y of ys)
-          for (const edge of [
-            g.box.y,
-            g.box.y + g.box.h / 2,
-            g.box.y + g.box.h,
-          ]) {
+        for (const y of g.ys)
+          for (const edge of g.edgesY) {
             const delta = y - (edge + dy);
             if (Math.abs(delta) < bestY) {
               bestY = Math.abs(delta);
@@ -695,7 +734,9 @@ export function DesignEditor({
       });
     }
   };
+  const pointer = useRafPointer(move);
   const end = () => {
+    pointer.flush();
     const g = gesture.current,
       b = marqueeRef.current;
     if (g?.mode === "marquee" && b) {
@@ -711,6 +752,8 @@ export function DesignEditor({
     finish();
   };
   const cancelGesture = () => {
+    pointer.cancel();
+    history.current.cancel();
     const g = gesture.current;
     if (g && "before" in g) apply(g.before);
     transaction.current = null;
@@ -775,7 +818,7 @@ export function DesignEditor({
       );
       return;
     }
-    commit({ ...doc, shapes: [...doc.shapes, ...copies] });
+    commit({ ...doc, shapes: [...doc.shapes, ...remapGroups(copies)] });
     setIds(copies.map((s) => s.id));
   };
   const remove = () => {
@@ -824,7 +867,7 @@ export function DesignEditor({
       x: clamp(s.x + 20, -10000, 10000),
       y: clamp(s.y + 20, -10000, 10000),
     }));
-    commit({ ...doc, shapes: [...doc.shapes, ...pasted] });
+    commit({ ...doc, shapes: [...doc.shapes, ...remapGroups(pasted)] });
     clipboard.current = pasted;
     setIds(pasted.map((s) => s.id));
     setPanel("properties");
@@ -1059,6 +1102,9 @@ export function DesignEditor({
           .filter((s) => !s.hidden && !s.locked)
           .map((s) => s.id),
       );
+    } else if (mod && k === "g") {
+      e.preventDefault();
+      e.shiftKey ? ungroup() : group();
     } else if (mod && k === "d") {
       e.preventDefault();
       duplicate();
@@ -1192,7 +1238,7 @@ export function DesignEditor({
   };
   const inlineCancelled = useRef(false);
   const handleSize = 14 / zoom;
-  return (
+  const workbench = (
     <div
       className="design-workbench"
       ref={root}
@@ -1253,6 +1299,22 @@ export function DesignEditor({
           {t(L("Вставить", "Paste", "Қою"))}
         </button>
         <span className="dw-divider" />
+        <button
+          className={button}
+          onClick={group}
+          disabled={editable.length < 2}
+          title="Ctrl / ⌘ G"
+        >
+          {t(L("Сгруппировать", "Group", "Топтау"))}
+        </button>
+        <button
+          className={button}
+          onClick={ungroup}
+          disabled={!selected.some((s) => s.groupId && !s.locked)}
+          title="Ctrl / ⌘ Shift G"
+        >
+          {t(L("Разгруппировать", "Ungroup", "Топтан шығару"))}
+        </button>
         <button className={button} onClick={() => template("poster")}>
           {t(L("Шаблон: постер", "Template: poster", "Үлгі: постер"))}
         </button>
@@ -1428,7 +1490,7 @@ export function DesignEditor({
           <div
             className="dw-viewport"
             ref={viewport}
-            onPointerMove={move}
+            onPointerMove={pointer.move}
             onPointerUp={end}
             onPointerCancel={cancelGesture}
             style={{ cursor: hand || space ? "grab" : "default" }}
@@ -1699,7 +1761,10 @@ export function DesignEditor({
                                 value={inline.text}
                                 maxLength={2000}
                                 onChange={(e) =>
-                                  setInline({ ...inline, text: e.target.value })
+                                  setInline({
+                                    ...inline,
+                                    text: e.target.value,
+                                  })
                                 }
                                 onBlur={finishInline}
                                 onKeyDown={(e) => {
@@ -2882,5 +2947,10 @@ export function DesignEditor({
         </div>
       )}
     </div>
+  );
+  return (
+    <NumberContext.Provider value={numericControls}>
+      {workbench}
+    </NumberContext.Provider>
   );
 }

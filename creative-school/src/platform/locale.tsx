@@ -1,5 +1,6 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useState,
@@ -19,10 +20,11 @@ export function currentLang() {
 const Locale = createContext<Lang>("ru");
 export function useLocale() {
   const lang = useContext(Locale);
-  return {
-    lang,
-    t: (s: Localized) => s[lang === "ru" ? 0 : lang === "en" ? 1 : 2],
-  };
+  const t = useCallback(
+    (s: Localized) => s[lang === "ru" ? 0 : lang === "en" ? 1 : 2],
+    [lang],
+  );
+  return { lang, t };
 }
 export function LocaleProvider({ children }: { children: ReactNode }) {
   const [lang, setLang] = useState<Lang>(() => {

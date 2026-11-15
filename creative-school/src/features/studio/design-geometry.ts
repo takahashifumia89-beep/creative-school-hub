@@ -1,5 +1,6 @@
 export type DesignShape = {
   id: string;
+  groupId?: string;
   type:
     | "rect"
     | "ellipse"

@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useRef,
+  useMemo,
   useState,
 } from "react";
 import { Link, useLocation } from "wouter";
@@ -89,17 +90,39 @@ export default function Studio({
     [settings, setSettings] = useState(false),
     [assistantOpen, setAssistantOpen] = useState(false),
     [assistantUsed, setAssistantUsed] = useState(false);
-  const saved = useRef(JSON.stringify(draft)),
+  const saved = useRef(""),
     latest = useRef(draft),
     lock = useRef(false),
     created = useRef<string | null>(null),
-    creationKey = useRef(crypto.randomUUID());
+    creationKey = useRef("");
+  saved.current ||= JSON.stringify(draft);
+  creationKey.current ||= crypto.randomUUID();
   const [assistantConversation, setAssistantConversation] = useState(
     id ?? creationKey.current,
   );
   const assistantLauncher = useRef<HTMLButtonElement>(null);
   latest.current = draft;
-  const dirty = JSON.stringify(draft) !== saved.current;
+  const savedDraft = useMemo(
+    () => JSON.parse(saved.current) as Draft,
+    [saved.current],
+  );
+  const dirty =
+    draft.content !== savedDraft.content ||
+    draft.title !== savedDraft.title ||
+    draft.description !== savedDraft.description ||
+    draft.id !== savedDraft.id ||
+    draft.version !== savedDraft.version;
+  const documentCache = useRef<{ content: string; value: unknown } | null>(
+    null,
+  );
+  const parsedDocument = useMemo(() => {
+    if (kind === "notes") return null;
+    if (documentCache.current?.content === draft.content)
+      return documentCache.current.value;
+    const value = JSON.parse(draft.content);
+    documentCache.current = { content: draft.content, value };
+    return value;
+  }, [draft.content, kind]);
   const load = useCallback(async () => {
     setReady(false);
     setError("");
@@ -143,19 +166,31 @@ export default function Studio({
   }, [key]);
   useEffect(() => {
     if (!ready || !dirty) return;
-    try {
-      localStorage.setItem(key, JSON.stringify(draft));
-    } catch {
-      setError(
-        t(
-          L(
-            "Не удалось сохранить локальный черновик. Скачайте JSON-копию.",
-            "Cannot save the local draft. Download a JSON backup.",
-            "Жергілікті нұсқа сақталмады. JSON көшірмесін жүктеңіз.",
+    const write = () => {
+      try {
+        localStorage.setItem(key, JSON.stringify(latest.current));
+      } catch {
+        setError(
+          t(
+            L(
+              "Не удалось сохранить локальный черновик. Скачайте JSON-копию.",
+              "Cannot save the local draft. Download a JSON backup.",
+              "Жергілікті нұсқа сақталмады. JSON көшірмесін жүктеңіз.",
+            ),
           ),
-        ),
-      );
-    }
+        );
+      }
+    };
+    const timer = setTimeout(write, 180);
+    const flush = () => {
+      clearTimeout(timer);
+      write();
+    };
+    window.addEventListener("pagehide", flush);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("pagehide", flush);
+    };
   }, [draft, dirty, ready, key]);
   useEffect(() => {
     const before = (e: BeforeUnloadEvent) => {
@@ -256,8 +291,11 @@ export default function Studio({
     document.body.classList.toggle("cs-studio-focus", focus);
     return () => document.body.classList.remove("cs-studio-focus");
   }, [focus]);
-  const update = (doc: unknown) =>
-    setDraft((d) => ({ ...d, content: JSON.stringify(doc) }));
+  const update = useCallback((doc: unknown) => {
+    const content = JSON.stringify(doc);
+    documentCache.current = { content, value: doc };
+    setDraft((d) => ({ ...d, content }));
+  }, []);
   async function importFile(file?: File) {
     if (!file) return;
     try {
@@ -532,9 +570,9 @@ export default function Studio({
               }
             >
               {kind === "design" ? (
-                <Design value={JSON.parse(draft.content)} onChange={update} />
+                <Design value={parsedDocument} onChange={update} />
               ) : kind === "3d" ? (
-                <Model value={JSON.parse(draft.content)} onChange={update} />
+                <Model value={parsedDocument} onChange={update} />
               ) : kind === "notes" ? (
                 <textarea
                   className="studio-notes"
@@ -546,7 +584,7 @@ export default function Studio({
               ) : (
                 <Media
                   kind={kind}
-                  value={JSON.parse(draft.content)}
+                  value={parsedDocument}
                   onChange={update}
                   cacheScope={user.id}
                 />
