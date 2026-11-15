@@ -1,3 +1,4 @@
+import { parseCaptions, captionsToSrt } from "./captions";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { z } from "zod";
 import type { videoSchema } from "./schema";
@@ -13,6 +14,8 @@ import {
 } from "./media-controls";
 import {
   clipOpacity,
+  clipDuration,
+  videoDimensions,
   locateClip,
   mediaReady,
   paintVideoFrame,
@@ -50,7 +53,8 @@ export default function VideoWorkbench({
     [error, setError] = useState(""),
     [timelineZoom, setTimelineZoom] = useState(45),
     [timelineAreaWidth, setTimelineAreaWidth] = useState(640),
-    [muted, setMuted] = useState(false);
+    [muted, setMuted] = useState(false),
+    [captionId, setCaptionId] = useState<string | null>(null);
   const doc = useRef(value);
   doc.current = value;
   const position = useRef(playhead);
@@ -73,6 +77,8 @@ export default function VideoWorkbench({
     mounted = useRef(true);
   const cur = value.clips.find((c) => c.id === selected) ?? null,
     total = timelineDuration(value.clips),
+    dimensions = videoDimensions(+value.width, value.aspect),
+    caption = value.captions?.find((c) => c.id === captionId) ?? null,
     timelineWidth = Math.max(timelineAreaWidth, total * timelineZoom),
     location = locateClip(value.clips, playhead),
     disabled = busy || importing;
@@ -171,6 +177,7 @@ export default function VideoWorkbench({
             loc.clip,
             loc.local,
             value.bg,
+            value,
           );
       } catch {
         if (!abort.signal.aborted)
@@ -241,6 +248,7 @@ export default function VideoWorkbench({
           Math.min(loc.local, loc.clip.end - 0.001),
           controller.signal,
         );
+        video.playbackRate = loc.clip.speed ?? 1;
         video.volume = muted
           ? 0
           : loc.clip.volume * clipOpacity(loc.clip, loc.local);
@@ -288,7 +296,10 @@ export default function VideoWorkbench({
               no(Error("STALLED"));
               return;
             }
-            at = loc.offset + Math.max(0, video.currentTime - loc.clip.start);
+            at =
+              loc.offset +
+              Math.max(0, video.currentTime - loc.clip.start) /
+                (loc.clip.speed ?? 1);
             video.volume = muted
               ? 0
               : loc.clip.volume * clipOpacity(loc.clip, video.currentTime);
@@ -299,13 +310,14 @@ export default function VideoWorkbench({
                 loc.clip,
                 video.currentTime,
                 snapshot.bg,
+                snapshot,
               );
             setHead(at);
             frame = requestAnimationFrame(tick);
           };
           tick();
         });
-        at = loc.offset + loc.clip.end - loc.clip.start;
+        at = loc.offset + clipDuration(loc.clip);
         setHead(Math.min(total, at));
       }
     } catch {
@@ -605,12 +617,17 @@ export default function VideoWorkbench({
     setBusy(true);
     setProgress(0);
     const output = document.createElement("canvas");
-    output.width = +snapshot.width;
-    output.height = Math.round((output.width * 9) / 16);
-    const stream = output.captureStream(30),
+    const outputSize = videoDimensions(+snapshot.width, snapshot.aspect);
+    output.width = outputSize.width;
+    output.height = outputSize.height;
+    const stream = output.captureStream(snapshot.fps ?? 30),
       audio = new AudioContext(),
       destination = audio.createMediaStreamDestination(),
-      mix = audio.createDynamicsCompressor();
+      mix = audio.createDynamicsCompressor(),
+      silence = audio.createConstantSource();
+    silence.offset.value = 0;
+    silence.connect(mix);
+    silence.start();
     mix.threshold.value = -3;
     mix.ratio.value = 20;
     mix.connect(destination);
@@ -658,6 +675,7 @@ export default function VideoWorkbench({
         if (controller.signal.aborted)
           throw new DOMException("Aborted", "AbortError");
         const video = document.createElement("video");
+        video.playbackRate = clip.speed ?? 1;
         video.preload = "auto";
         video.playsInline = true;
         video.src = assets.urls[clip.assetId!];
@@ -686,10 +704,58 @@ export default function VideoWorkbench({
         tracks[0].clip,
         tracks[0].clip.start,
         snapshot.bg,
+        snapshot,
       );
-      recorder.start(1000);
+      // Keep presenting the first frame until the encoder is ready. A very
+      // short clip can otherwise end before MediaRecorder receives any frame.
+      await new Promise<void>((ok, no) => {
+        let frame = 0;
+        const cleanup = () => {
+          cancelAnimationFrame(frame);
+          clearTimeout(timer);
+          recorder.removeEventListener("start", ready);
+          recorder.removeEventListener("error", bad);
+          controller.signal.removeEventListener("abort", abort);
+        };
+        const ready = () => {
+          cleanup();
+          ok();
+        };
+        const bad = () => {
+          cleanup();
+          no(Error("RECORDER"));
+        };
+        const abort = () => {
+          cleanup();
+          no(new DOMException("Aborted", "AbortError"));
+        };
+        const timer = setTimeout(() => {
+          cleanup();
+          no(Error("START_TIMEOUT"));
+        }, 10000);
+        const prime = () => {
+          paintVideoFrame(
+            output,
+            tracks[0].video,
+            tracks[0].clip,
+            tracks[0].clip.start,
+            snapshot.bg,
+            snapshot,
+          );
+          (
+            stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack
+          ).requestFrame?.();
+          frame = requestAnimationFrame(prime);
+        };
+        recorder.addEventListener("start", ready, { once: true });
+        recorder.addEventListener("error", bad, { once: true });
+        controller.signal.addEventListener("abort", abort, { once: true });
+        recorder.start(250);
+        prime();
+      });
       let startSoundtrack = !!soundtrack;
       for (const { clip, video, gain, source } of tracks) {
+        video.playbackRate = clip.speed ?? 1;
         if (controller.signal.aborted)
           throw new DOMException("Aborted", "AbortError");
         await Promise.all([
@@ -749,6 +815,7 @@ export default function VideoWorkbench({
               clip,
               video.currentTime,
               snapshot.bg,
+              snapshot,
             );
             if (preview.current)
               paintVideoFrame(
@@ -757,12 +824,16 @@ export default function VideoWorkbench({
                 clip,
                 video.currentTime,
                 snapshot.bg,
+                snapshot,
               );
             setProgress(
               Math.min(
                 99,
                 Math.round(
-                  ((elapsed + video.currentTime - clip.start) / duration) * 100,
+                  ((elapsed +
+                    (video.currentTime - clip.start) / (clip.speed ?? 1)) /
+                    duration) *
+                    100,
                 ),
               ),
             );
@@ -770,7 +841,7 @@ export default function VideoWorkbench({
           };
           draw();
         });
-        elapsed += clip.end - clip.start;
+        elapsed += clipDuration(clip);
         source.disconnect();
         gain.disconnect();
       }
@@ -790,7 +861,19 @@ export default function VideoWorkbench({
       });
       if (controller.signal.aborted)
         throw new DOMException("Aborted", "AbortError");
-      download("creative-school.webm", new Blob(chunks, { type: mime }));
+      const exported = new Blob(chunks, { type: mime });
+      const signature = new Uint8Array(
+        await exported.slice(0, 4).arrayBuffer(),
+      );
+      if (
+        signature.length !== 4 ||
+        signature[0] !== 0x1a ||
+        signature[1] !== 0x45 ||
+        signature[2] !== 0xdf ||
+        signature[3] !== 0xa3
+      )
+        throw Error("EMPTY_EXPORT");
+      download("creative-school.webm", exported);
       setProgress(100);
     } catch {
       if (exportError === "SIZE")
@@ -823,6 +906,8 @@ export default function VideoWorkbench({
       soundtrack?.pause();
       soundtrack?.removeAttribute("src");
       stream.getTracks().forEach((track) => track.stop());
+      silence.stop();
+      silence.disconnect();
       await audio.close().catch(() => undefined);
       output.width = 1;
       output.height = 1;
@@ -861,7 +946,8 @@ export default function VideoWorkbench({
       e.preventDefault();
       seek(
         playhead +
-          (e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? 1 : 1 / 30),
+          (e.key === "ArrowRight" ? 1 : -1) *
+            (e.shiftKey ? 1 : 1 / (value.fps ?? 30)),
       );
     }
   }
@@ -946,8 +1032,9 @@ export default function VideoWorkbench({
         <div className="media-monitor">
           <canvas
             ref={preview}
-            width={+value.width}
-            height={Math.round((+value.width * 9) / 16)}
+            width={dimensions.width}
+            height={dimensions.height}
+            style={{ aspectRatio: `${dimensions.width}/${dimensions.height}` }}
             className="media-preview-canvas"
             aria-label={t(
               L(
@@ -1031,7 +1118,7 @@ export default function VideoWorkbench({
                 type="range"
                 min={0}
                 max={Math.max(total, 0.01)}
-                step={1 / 30}
+                step={1 / (value.fps ?? 30)}
                 value={Math.min(playhead, total)}
                 disabled={disabled || !total}
                 onChange={(e) => seek(+e.target.value)}
@@ -1061,14 +1148,14 @@ export default function VideoWorkbench({
                 {value.clips.map((clip, i) => {
                   const offset = value.clips
                     .slice(0, i)
-                    .reduce((s, c) => s + c.end - c.start, 0);
+                    .reduce((s, c) => s + clipDuration(c), 0);
                   return (
                     <button
                       key={clip.id}
                       className="media-timeline-clip"
                       style={{
                         left: `${(offset / total) * 100}%`,
-                        width: `${((clip.end - clip.start) / total) * 100}%`,
+                        width: `${(clipDuration(clip) / total) * 100}%`,
                       }}
                       draggable={!disabled}
                       onDragStart={(e) =>
@@ -1094,7 +1181,7 @@ export default function VideoWorkbench({
                           : ""}
                         {i + 1}. {clip.filename}
                       </span>
-                      <small>{(clip.end - clip.start).toFixed(2)} s</small>
+                      <small>{clipDuration(clip).toFixed(2)} s</small>
                     </button>
                   );
                 })}
@@ -1224,8 +1311,10 @@ export default function VideoWorkbench({
               </div>
               <label>
                 {t(L("Титр", "Title overlay", "Титр"))}
-                <input
+                <textarea
+                  rows={2}
                   maxLength={100}
+                  aria-label={t(L("Титр", "Title overlay", "Титр"))}
                   value={cur.title}
                   disabled={disabled}
                   onFocus={begin}
@@ -1233,6 +1322,244 @@ export default function VideoWorkbench({
                   onChange={(e) => edit({ title: e.target.value }, true)}
                 />
               </label>
+              <h3>
+                {t(L("Кадр и темп", "Framing and pace", "Кадр мен қарқын"))}
+              </h3>
+              <label>
+                {t(L("Скорость клипа", "Clip speed", "Клип жылдамдығы"))}
+                <select
+                  aria-label={t(
+                    L("Скорость клипа", "Clip speed", "Клип жылдамдығы"),
+                  )}
+                  value={cur.speed ?? 1}
+                  disabled={disabled}
+                  onChange={(e) => edit({ speed: +e.target.value })}
+                >
+                  {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map((n) => (
+                    <option key={n} value={n}>
+                      {n}×
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {t(L("Заполнение кадра", "Frame fitting", "Кадрды толтыру"))}
+                <select
+                  aria-label={t(
+                    L("Заполнение кадра", "Frame fitting", "Кадрды толтыру"),
+                  )}
+                  value={cur.fit ?? "contain"}
+                  disabled={disabled}
+                  onChange={(e) =>
+                    edit({ fit: e.target.value as "contain" | "cover" })
+                  }
+                >
+                  <option value="contain">
+                    {t(
+                      L("Вписать целиком", "Fit whole image", "Толық сыйдыру"),
+                    )}
+                  </option>
+                  <option value="cover">
+                    {t(
+                      L(
+                        "Заполнить с обрезкой",
+                        "Fill and crop",
+                        "Қиып толтыру",
+                      ),
+                    )}
+                  </option>
+                </select>
+              </label>
+              <Slider
+                label={t(L("Приближение", "Zoom", "Жақындату"))}
+                value={cur.zoom ?? 1}
+                min={1}
+                max={3}
+                step={0.05}
+                disabled={disabled}
+                onBegin={begin}
+                onEnd={history.end}
+                onChange={(n) => edit({ zoom: n }, true)}
+              />
+              <Slider
+                label={t(
+                  L(
+                    "Сдвиг по горизонтали",
+                    "Horizontal pan",
+                    "Көлденең жылжыту",
+                  ),
+                )}
+                value={cur.panX ?? 0}
+                min={-1}
+                max={1}
+                step={0.02}
+                disabled={disabled}
+                onBegin={begin}
+                onEnd={history.end}
+                onChange={(n) => edit({ panX: n }, true)}
+              />
+              <Slider
+                label={t(
+                  L("Сдвиг по вертикали", "Vertical pan", "Тік жылжыту"),
+                )}
+                value={cur.panY ?? 0}
+                min={-1}
+                max={1}
+                step={0.02}
+                disabled={disabled}
+                onBegin={begin}
+                onEnd={history.end}
+                onChange={(n) => edit({ panY: n }, true)}
+              />
+              <div className="media-two">
+                <button
+                  aria-pressed={!!cur.flipX}
+                  disabled={disabled}
+                  onClick={() => edit({ flipX: !cur.flipX })}
+                >
+                  {t(L("Зеркало ↔", "Flip horizontal", "Көлденең айна"))}
+                </button>
+                <button
+                  aria-pressed={!!cur.flipY}
+                  disabled={disabled}
+                  onClick={() => edit({ flipY: !cur.flipY })}
+                >
+                  {t(L("Зеркало ↕", "Flip vertical", "Тік айна"))}
+                </button>
+              </div>
+              <details className="media-wide">
+                <summary>
+                  {t(
+                    L("Оформление титра", "Title styling", "Титрді безендіру"),
+                  )}
+                </summary>
+                <label>
+                  {t(L("Положение титра", "Title position", "Титр орны"))}
+                  <select
+                    aria-label={t(
+                      L("Положение титра", "Title position", "Титр орны"),
+                    )}
+                    value={cur.titlePosition ?? "bottom"}
+                    disabled={disabled}
+                    onChange={(e) =>
+                      edit({
+                        titlePosition: e.target
+                          .value as TimelineClip["titlePosition"],
+                      })
+                    }
+                  >
+                    <option value="top">
+                      {t(L("Сверху", "Top", "Жоғары"))}
+                    </option>
+                    <option value="center">
+                      {t(L("По центру", "Center", "Ортада"))}
+                    </option>
+                    <option value="bottom">
+                      {t(L("Снизу", "Bottom", "Төмен"))}
+                    </option>
+                  </select>
+                </label>
+                <label>
+                  {t(
+                    L(
+                      "Выравнивание титра",
+                      "Title alignment",
+                      "Титрді туралау",
+                    ),
+                  )}
+                  <select
+                    aria-label={t(
+                      L(
+                        "Выравнивание титра",
+                        "Title alignment",
+                        "Титрді туралау",
+                      ),
+                    )}
+                    value={cur.titleAlign ?? "left"}
+                    disabled={disabled}
+                    onChange={(e) =>
+                      edit({
+                        titleAlign: e.target
+                          .value as TimelineClip["titleAlign"],
+                      })
+                    }
+                  >
+                    <option value="left">{t(L("Слева", "Left", "Сол"))}</option>
+                    <option value="center">
+                      {t(L("Центр", "Center", "Орта"))}
+                    </option>
+                    <option value="right">
+                      {t(L("Справа", "Right", "Оң"))}
+                    </option>
+                  </select>
+                </label>
+                <label>
+                  {t(L("Цвет титра", "Title color", "Титр түсі"))}
+                  <input
+                    type="color"
+                    value={cur.titleColor ?? "#ffffff"}
+                    disabled={disabled}
+                    onFocus={begin}
+                    onBlur={history.end}
+                    onChange={(e) => edit({ titleColor: e.target.value }, true)}
+                  />
+                </label>
+                <Slider
+                  label={t(L("Размер титра", "Title size", "Титр өлшемі"))}
+                  value={cur.titleSize ?? 44}
+                  min={20}
+                  max={100}
+                  disabled={disabled}
+                  onBegin={begin}
+                  onEnd={history.end}
+                  onChange={(n) => edit({ titleSize: n }, true)}
+                />
+                <label className="media-check">
+                  <input
+                    type="checkbox"
+                    checked={cur.titleBackground !== false}
+                    disabled={disabled}
+                    onChange={(e) =>
+                      edit({ titleBackground: e.target.checked })
+                    }
+                  />
+                  {t(L("Подложка титра", "Title background", "Титр фоны"))}
+                </label>
+              </details>
+              <Slider
+                label={t(
+                  L("Насыщенность клипа", "Clip saturation", "Клип қанықтығы"),
+                )}
+                value={cur.saturation ?? 100}
+                min={0}
+                max={200}
+                disabled={disabled}
+                onBegin={begin}
+                onEnd={history.end}
+                onChange={(n) => edit({ saturation: n }, true)}
+              />
+              <button
+                disabled={disabled}
+                onClick={() =>
+                  apply({
+                    ...value,
+                    clips: value.clips.map((c) => ({
+                      ...c,
+                      brightness: cur.brightness,
+                      contrast: cur.contrast,
+                      saturation: cur.saturation,
+                    })),
+                  })
+                }
+              >
+                {t(
+                  L(
+                    "Этот цвет — ко всем клипам",
+                    "Apply color to all clips",
+                    "Бұл түсті барлық клипке қолдану",
+                  ),
+                )}
+              </button>
               <Slider
                 label={t(L("Громкость клипа", "Clip volume", "Клип дыбысы"))}
                 value={cur.volume}
@@ -1356,16 +1683,274 @@ export default function VideoWorkbench({
             {t(L("Параметры проекта", "Project settings", "Жоба баптаулары"))}
           </h3>
           <label>
+            {t(L("Формат кадра", "Aspect ratio", "Кадр пішімі"))}
+            <select
+              aria-label={t(L("Формат кадра", "Aspect ratio", "Кадр пішімі"))}
+              value={value.aspect ?? "wide"}
+              disabled={disabled}
+              onChange={(e) =>
+                apply({
+                  ...value,
+                  aspect: e.target.value as VideoDoc["aspect"],
+                })
+              }
+            >
+              <option value="wide">
+                16:9 · {t(L("Горизонтальный", "Landscape", "Көлденең"))}
+              </option>
+              <option value="portrait">9:16 · Reels / Shorts</option>
+              <option value="square">
+                1:1 · {t(L("Квадрат", "Square", "Шаршы"))}
+              </option>
+            </select>
+          </label>
+          <label>
+            {t(L("Частота кадров", "Frame rate", "Кадр жиілігі"))}
+            <select
+              aria-label={t(L("Частота кадров", "Frame rate", "Кадр жиілігі"))}
+              value={value.fps ?? 30}
+              disabled={disabled}
+              onChange={(e) =>
+                apply({ ...value, fps: +e.target.value as VideoDoc["fps"] })
+              }
+            >
+              {[24, 25, 30, 60].map((n) => (
+                <option key={n} value={n}>
+                  {n} fps
+                </option>
+              ))}
+            </select>
+          </label>
+          <details className="media-wide">
+            <summary>
+              {t(
+                L(
+                  "Субтитры · SRT / VTT",
+                  "Captions · SRT / VTT",
+                  "Субтитр · SRT / VTT",
+                ),
+              )}
+            </summary>
+            <label className="media-file">
+              {t(L("Импорт субтитров", "Import captions", "Субтитр импорттау"))}
+              <input
+                type="file"
+                accept=".srt,.vtt,text/plain,text/vtt"
+                disabled={disabled}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) return;
+                  try {
+                    if (file.size > 200000) throw Error();
+                    const next = parseCaptions(await file.text());
+                    apply({ ...value, captions: next });
+                    setCaptionId(next[0].id);
+                  } catch {
+                    setError(
+                      t(
+                        L(
+                          "Субтитры не прочитаны. Нужен SRT/VTT: до 200 реплик, по 300 символов.",
+                          "Cannot read captions. Use SRT/VTT: up to 200 cues, 300 characters each.",
+                          "Субтитр оқылмады. SRT/VTT: 200 репликаға дейін, әрқайсысы 300 таңба.",
+                        ),
+                      ),
+                    );
+                  }
+                }}
+              />
+            </label>
+            <div className="media-two">
+              <button
+                disabled={
+                  disabled || total <= 0 || (value.captions?.length ?? 0) >= 200
+                }
+                onClick={() => {
+                  const cue = {
+                    id: crypto.randomUUID(),
+                    start: Math.min(playhead, Math.max(0, total - 0.1)),
+                    end: Math.min(total, playhead + 3),
+                    text: t(L("Новая реплика", "New caption", "Жаңа реплика")),
+                  };
+                  apply({
+                    ...value,
+                    captions: [...(value.captions ?? []), cue],
+                  });
+                  setCaptionId(cue.id);
+                }}
+              >
+                {t(L("Добавить реплику", "Add caption", "Реплика қосу"))}
+              </button>
+              <button
+                disabled={!value.captions?.length}
+                onClick={() =>
+                  download(
+                    "captions.srt",
+                    captionsToSrt(value.captions ?? []),
+                    "text/plain",
+                  )
+                }
+              >
+                SRT ↓
+              </button>
+            </div>
+            {!!value.captions?.length && (
+              <label>
+                {t(L("Выбрать реплику", "Choose caption", "Реплика таңдау"))}
+                <select
+                  aria-label={t(
+                    L("Выбрать реплику", "Choose caption", "Реплика таңдау"),
+                  )}
+                  value={captionId ?? ""}
+                  onChange={(e) => {
+                    setCaptionId(e.target.value);
+                    const c = value.captions?.find(
+                      (c) => c.id === e.target.value,
+                    );
+                    if (c) seek(c.start);
+                  }}
+                >
+                  <option value="" disabled>
+                    —
+                  </option>
+                  {value.captions.map((c, i) => (
+                    <option key={c.id} value={c.id}>
+                      {i + 1}. {formatTime(c.start)} · {c.text.slice(0, 40)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {caption && (
+              <>
+                <label>
+                  {t(L("Текст субтитра", "Caption text", "Субтитр мәтіні"))}
+                  <textarea
+                    maxLength={300}
+                    aria-label={t(
+                      L("Текст субтитра", "Caption text", "Субтитр мәтіні"),
+                    )}
+                    value={caption.text}
+                    disabled={disabled}
+                    onFocus={begin}
+                    onBlur={history.end}
+                    onChange={(e) =>
+                      history.update({
+                        ...value,
+                        captions: value.captions?.map((c) =>
+                          c.id === caption.id
+                            ? { ...c, text: e.target.value || " " }
+                            : c,
+                        ),
+                      })
+                    }
+                  />
+                </label>
+                <div className="media-two">
+                  <label>
+                    {t(
+                      L(
+                        "Начало субтитра, с",
+                        "Caption start, seconds",
+                        "Субтитр басы, с",
+                      ),
+                    )}
+                    <input
+                      type="number"
+                      min={0}
+                      max={caption.end - 0.01}
+                      step={0.01}
+                      value={caption.start}
+                      onFocus={begin}
+                      onBlur={history.end}
+                      onChange={(e) =>
+                        history.update({
+                          ...value,
+                          captions: value.captions?.map((c) =>
+                            c.id === caption.id
+                              ? {
+                                  ...c,
+                                  start: Math.max(
+                                    0,
+                                    Math.min(c.end - 0.01, +e.target.value),
+                                  ),
+                                }
+                              : c,
+                          ),
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    {t(
+                      L(
+                        "Конец субтитра, с",
+                        "Caption end, seconds",
+                        "Субтитр соңы, с",
+                      ),
+                    )}
+                    <input
+                      type="number"
+                      min={caption.start + 0.01}
+                      max={1000000}
+                      step={0.01}
+                      value={caption.end}
+                      onFocus={begin}
+                      onBlur={history.end}
+                      onChange={(e) =>
+                        history.update({
+                          ...value,
+                          captions: value.captions?.map((c) =>
+                            c.id === caption.id
+                              ? {
+                                  ...c,
+                                  end: Math.min(
+                                    1000000,
+                                    Math.max(c.start + 0.01, +e.target.value),
+                                  ),
+                                }
+                              : c,
+                          ),
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+                <button
+                  disabled={disabled}
+                  onClick={() => {
+                    apply({
+                      ...value,
+                      captions: value.captions?.filter(
+                        (c) => c.id !== caption.id,
+                      ),
+                    });
+                    setCaptionId(null);
+                  }}
+                >
+                  {t(L("Удалить реплику", "Delete caption", "Репликаны жою"))}
+                </button>
+              </>
+            )}
+          </details>
+          <label>
             {t(L("Разрешение", "Resolution", "Ажыратымдылық"))}
             <select
+              aria-label={t(L("Разрешение", "Resolution", "Ажыратымдылық"))}
               value={value.width}
               disabled={disabled}
               onChange={(e) =>
                 apply({ ...value, width: e.target.value as VideoDoc["width"] })
               }
             >
-              <option value="1280">1280 × 720</option>
-              <option value="720">720 × 405</option>
+              <option value="1280">
+                {videoDimensions(1280, value.aspect).width} ×{" "}
+                {videoDimensions(1280, value.aspect).height}
+              </option>
+              <option value="720">
+                {videoDimensions(720, value.aspect).width} ×{" "}
+                {videoDimensions(720, value.aspect).height}
+              </option>
             </select>
           </label>
           <label>

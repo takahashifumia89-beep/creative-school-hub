@@ -1,3 +1,4 @@
+import { serviceRoute } from "./services";
 import { ensureSchema } from "./schema";
 import { curriculum, lessonMap } from "../src/platform/curriculum";
 import { kinds, validDocument, type ProjectKind } from "../src/platform/schema";
@@ -383,10 +384,14 @@ async function route(req: Request, env: Env): Promise<Response> {
       .first();
     return p ? json(p) : fail("NOT_FOUND", 404);
   }
+  if (path === "/api/services" && method === "GET")
+    return (await serviceRoute(db, path, method, b, null))!;
   if (!user) return fail("UNAUTHORIZED", 401);
   const uid = String(user.id);
   if (write && !(await limit(db, `write:${uid}`, 120, 60)))
     return fail("RATE_LIMIT", 429);
+  const serviceResponse = await serviceRoute(db, path, method, b, { id: uid });
+  if (serviceResponse) return serviceResponse;
   if (path === "/api/assistant" && method === "GET")
     return json({
       available: assistantAvailable(env),
@@ -718,13 +723,19 @@ async function route(req: Request, env: Env): Promise<Response> {
       return json({ recovery });
     }
     if (path === "/api/security/export") {
-      const [p, x, l] = await Promise.all(
-        ["projects", "xp_events", "lesson_progress"].map((table) =>
+      const [p, x, l, offers, orders] = await Promise.all(
+        [
+          "projects",
+          "xp_events",
+          "lesson_progress",
+          "service_offers",
+          "service_orders",
+        ].map((table) =>
           db
             .prepare(
-              `SELECT * FROM ${table} WHERE ${table === "projects" ? "owner_id" : "user_id"}=?`,
+              `SELECT * FROM ${table} WHERE ${table === "projects" ? "owner_id" : table === "service_offers" ? "seller_id" : table === "service_orders" ? "buyer_id=? OR seller_id" : "user_id"}=?`,
             )
-            .bind(uid)
+            .bind(...(table === "service_orders" ? [uid, uid] : [uid]))
             .all(),
         ),
       );
@@ -733,6 +744,8 @@ async function route(req: Request, env: Env): Promise<Response> {
         projects: p.results,
         xp: x.results,
         lessons: l.results,
+        serviceOffers: offers.results,
+        serviceOrders: orders.results,
       });
     }
   }

@@ -1,0 +1,303 @@
+.service-market {
+  max-width: 1320px;
+  margin: auto;
+  padding: 34px clamp(18px, 3vw, 40px);
+  color: hsl(var(--foreground));
+}
+.sm-intro {
+  display: flex;
+  gap: 28px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.sm-intro > div {
+  max-width: 720px;
+}
+.sm-eyebrow {
+  font: 10px var(--app-font-mono, monospace);
+  letter-spacing: 0.13em;
+  color: hsl(var(--muted-foreground));
+}
+.sm-intro h1 {
+  font: clamp(30px, 4vw, 52px)/1.08 var(--app-font-serif, serif);
+  letter-spacing: -0.05em;
+  margin: 14px 0;
+}
+.sm-intro p {
+  font-size: 13px;
+  line-height: 1.8;
+  color: hsl(var(--muted-foreground));
+}
+.service-market button,
+.service-market .sm-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 13px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 9px;
+  background: hsl(var(--card));
+  font-size: 12px;
+  cursor: pointer;
+  color: inherit;
+  text-decoration: none;
+}
+.service-market button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.service-market .sm-primary {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border-color: hsl(var(--primary));
+  font-weight: 600;
+}
+.sm-notice {
+  font-size: 11px;
+  line-height: 1.8;
+  background: hsl(var(--primary) / 0.06);
+  border: 1px solid hsl(var(--border));
+  padding: 12px 16px;
+  border-radius: 10px;
+  margin: 14px 0;
+}
+.sm-error {
+  padding: 12px;
+  border: 1px solid hsl(var(--destructive));
+  border-radius: 9px;
+  color: hsl(var(--destructive));
+  font-size: 12px;
+}
+.sm-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 24px 0 18px;
+}
+.sm-tabs button[aria-pressed="true"] {
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+}
+.sm-filters {
+  display: grid;
+  grid-template-columns: 1fr 180px 180px;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.service-market input,
+.service-market select,
+.service-market textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  border-radius: 8px;
+  color: inherit;
+  font: 12px/1.6 var(--app-font-sans, sans-serif);
+}
+.service-market textarea {
+  resize: vertical;
+}
+.service-market :focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
+}
+.sm-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+.sm-card {
+  border: 1px solid hsl(var(--border));
+  border-radius: 16px;
+  background: hsl(var(--card));
+  overflow: hidden;
+}
+.sm-art {
+  height: 160px;
+  background: hsl(var(--accent));
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+.sm-art span {
+  font: 10px var(--app-font-mono, monospace);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.sm-art-video,
+.sm-art-shorts {
+  background: hsl(var(--primary) / 0.15);
+}
+.sm-art-photo,
+.sm-art-presentation {
+  background: hsl(var(--secondary) / 0.18);
+}
+.sm-card-body {
+  padding: 18px;
+}
+.sm-seller {
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+.sm-card h2 {
+  font-size: 19px;
+  line-height: 1.35;
+  margin: 10px 0;
+}
+.sm-card p {
+  font-size: 12px;
+  line-height: 1.8;
+  min-height: 64px;
+  overflow-wrap: anywhere;
+  color: hsl(var(--muted-foreground));
+}
+.sm-card small {
+  font-size: 10px;
+  color: hsl(var(--muted-foreground));
+}
+.sm-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid hsl(var(--border));
+  padding-top: 14px;
+  margin-top: 15px;
+}
+.sm-card-footer strong {
+  font-size: 20px;
+  letter-spacing: -0.04em;
+}
+.sm-empty {
+  padding: 38px;
+  border: 1px dashed hsl(var(--border));
+  border-radius: 16px;
+  text-align: center;
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+}
+.sm-empty h2 {
+  font-size: 20px;
+  color: hsl(var(--foreground));
+  margin-bottom: 12px;
+}
+.sm-form {
+  max-width: 850px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 16px;
+  padding: 24px;
+  background: hsl(var(--card));
+  margin: 24px 0;
+  scroll-margin-top: 85px;
+}
+.sm-form h2,
+.sm-order h2 {
+  font-size: 23px;
+  letter-spacing: -0.03em;
+  margin-bottom: 14px;
+}
+.sm-form p {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.8;
+  margin: 10px 0;
+}
+.service-market label {
+  display: block;
+  font-size: 12px;
+  margin: 14px 0;
+}
+.service-market label input,
+.service-market label textarea,
+.service-market label select {
+  display: block;
+  margin-top: 6px;
+}
+.sm-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.sm-check {
+  display: flex !important;
+  gap: 8px;
+  align-items: center;
+}
+.sm-check input {
+  width: auto !important;
+  margin: 0 !important;
+}
+.sm-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+.sm-orders {
+  display: grid;
+  gap: 18px;
+}
+.sm-order {
+  padding: 22px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 14px;
+  background: hsl(var(--card));
+}
+.sm-order-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+}
+.sm-order-head span {
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+.sm-order p {
+  font-size: 12px;
+  line-height: 1.8;
+  margin: 10px 0;
+  overflow-wrap: anywhere;
+}
+.sm-pre {
+  white-space: pre-wrap;
+}
+.sm-form small {
+  color: hsl(var(--muted-foreground));
+  font-size: 10px;
+}
+@media (max-width: 1100px) {
+  .sm-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .sm-intro {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .sm-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 600px) {
+  .sm-grid {
+    grid-template-columns: 1fr;
+  }
+  .sm-filters {
+    grid-template-columns: 1fr;
+  }
+  .sm-order-head {
+    flex-direction: column;
+    gap: 0;
+  }
+  .sm-form {
+    padding: 16px;
+  }
+  .sm-card p {
+    min-height: 0;
+  }
+}

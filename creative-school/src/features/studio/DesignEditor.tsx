@@ -185,6 +185,7 @@ export function DesignEditor({
     [clipboardVersion, setClipboardVersion] = useState(0),
     [ids, setIds] = useState<string[]>([]),
     [panel, setPanel] = useState<"layers" | "properties">("layers"),
+    [shapeQuery, setShapeQuery] = useState(""),
     [panelOpen, setPanelOpen] = useState(true),
     [zoom, setZoom] = useState(1),
     [fitMode, setFitMode] = useState(true),
@@ -229,6 +230,20 @@ export function DesignEditor({
         arrow: L("Стрелка", "Arrow", "Көрсеткі"),
         cross: L("Крест", "Cross", "Айқыш"),
         parallelogram: L("Параллелограмм", "Parallelogram", "Параллелограмм"),
+        heart: L("Сердце", "Heart", "Жүрек"),
+        bubble: L("Облачко речи", "Speech bubble", "Сөйлеу бұлты"),
+        chevron: L("Шеврон", "Chevron", "Шеврон"),
+        "double-arrow": L("Двойная стрелка", "Double arrow", "Қос көрсеткі"),
+        lightning: L("Молния", "Lightning", "Найзағай"),
+        semicircle: L("Полукруг", "Semicircle", "Жарты шеңбер"),
+        crescent: L("Полумесяц", "Crescent", "Жарты ай"),
+        shield: L("Щит", "Shield", "Қалқан"),
+        tag: L("Бирка", "Tag", "Таңба"),
+        bookmark: L("Закладка", "Bookmark", "Бетбелгі"),
+        pin: L("Метка карты", "Map pin", "Карта белгісі"),
+        burst: L("Вспышка", "Burst", "Жарқыл"),
+        polygon: L("Многоугольник", "Polygon", "Көпбұрыш"),
+        gear: L("Шестерня", "Gear", "Тісті дөңгелек"),
         trapezoid: L("Трапеция", "Trapezoid", "Трапеция"),
       }[type],
     );
@@ -1291,6 +1306,14 @@ export function DesignEditor({
             ),
           )}
         </summary>
+        <input
+          className="dw-input"
+          type="search"
+          aria-label={t(L("Поиск фигур", "Search shapes", "Пішін іздеу"))}
+          placeholder={t(L("Найти фигуру…", "Find a shape…", "Пішін табу…"))}
+          value={shapeQuery}
+          onChange={(e) => setShapeQuery(e.target.value)}
+        />
         <div>
           {(
             [
@@ -1303,31 +1326,49 @@ export function DesignEditor({
               "cross",
               "parallelogram",
               "trapezoid",
+              "heart",
+              "bubble",
+              "chevron",
+              "double-arrow",
+              "lightning",
+              "semicircle",
+              "crescent",
+              "shield",
+              "tag",
+              "bookmark",
+              "pin",
+              "burst",
+              "polygon",
+              "gear",
             ] as const
-          ).map((type) => (
-            <button key={type} className={button} onClick={() => add(type)}>
-              <svg
-                width="30"
-                height="28"
-                viewBox="0 0 40 36"
-                aria-hidden="true"
-              >
-                <polygon
-                  points={polygonPoints({
-                    id: "preview",
-                    type,
-                    x: 3,
-                    y: 3,
-                    w: 34,
-                    h: 30,
-                    fill: "currentColor",
-                  })}
-                  fill="currentColor"
-                />
-              </svg>
-              {typeLabel(type)}
-            </button>
-          ))}
+          )
+            .filter((type) =>
+              typeLabel(type).toLowerCase().includes(shapeQuery.toLowerCase()),
+            )
+            .map((type) => (
+              <button key={type} className={button} onClick={() => add(type)}>
+                <svg
+                  width="30"
+                  height="28"
+                  viewBox="0 0 40 36"
+                  aria-hidden="true"
+                >
+                  <polygon
+                    points={polygonPoints({
+                      id: "preview",
+                      type,
+                      x: 3,
+                      y: 3,
+                      w: 34,
+                      h: 30,
+                      fill: "currentColor",
+                    })}
+                    fill="currentColor"
+                  />
+                </svg>
+                {typeLabel(type)}
+              </button>
+            ))}
         </div>
       </details>
       <div className={`dw-grid ${panelOpen ? "" : "dw-no-panel"}`}>
@@ -1440,6 +1481,24 @@ export function DesignEditor({
                       pointerEvents="none"
                     />
                   )}
+                  <defs>
+                    {value.shapes.map((s, i) =>
+                      s.fill2 ? (
+                        <linearGradient
+                          key={s.id}
+                          id={`${uid}-paint-${i}`}
+                          x1="0%"
+                          y1="0%"
+                          x2="100%"
+                          y2="0%"
+                          gradientTransform={`rotate(${s.gradientAngle ?? 0} .5 .5)`}
+                        >
+                          <stop offset="0%" stopColor={s.fill} />
+                          <stop offset="100%" stopColor={s.fill2} />
+                        </linearGradient>
+                      ) : null,
+                    )}
+                  </defs>
                   {value.shapes
                     .filter((s) => !s.hidden)
                     .map((s) => {
@@ -1457,6 +1516,13 @@ export function DesignEditor({
                           transform={rotation(s)}
                           stroke={s.stroke ?? "none"}
                           strokeWidth={s.strokeWidth ?? 0}
+                          strokeDasharray={
+                            s.strokeDash === "dashed"
+                              ? "12 7"
+                              : s.strokeDash === "dotted"
+                                ? "2 6"
+                                : undefined
+                          }
                           onPointerDown={(e) => shapeDown(e, s)}
                           onDoubleClick={(e) => {
                             e.stopPropagation();
@@ -1483,7 +1549,11 @@ export function DesignEditor({
                               width={s.w}
                               height={s.h}
                               rx={s.r ?? 0}
-                              fill={s.fill}
+                              fill={
+                                s.fill2
+                                  ? `url(#${uid}-paint-${value.shapes.indexOf(s)})`
+                                  : s.fill
+                              }
                               opacity={s.op ?? 1}
                             />
                           )}
@@ -1493,14 +1563,22 @@ export function DesignEditor({
                               cy={s.y + s.h / 2}
                               rx={s.w / 2}
                               ry={s.h / 2}
-                              fill={s.fill}
+                              fill={
+                                s.fill2
+                                  ? `url(#${uid}-paint-${value.shapes.indexOf(s)})`
+                                  : s.fill
+                              }
                               opacity={s.op ?? 1}
                             />
                           )}
                           {!["rect", "ellipse", "text"].includes(s.type) && (
                             <polygon
                               points={polygonPoints(s)}
-                              fill={s.fill}
+                              fill={
+                                s.fill2
+                                  ? `url(#${uid}-paint-${value.shapes.indexOf(s)})`
+                                  : s.fill
+                              }
                               opacity={s.op ?? 1}
                             />
                           )}
@@ -1522,7 +1600,11 @@ export function DesignEditor({
                               x={textX}
                               y={s.y}
                               fontSize={s.size ?? 36}
-                              fill={s.fill}
+                              fill={
+                                s.fill2
+                                  ? `url(#${uid}-paint-${value.shapes.indexOf(s)})`
+                                  : s.fill
+                              }
                               opacity={s.op ?? 1}
                               dominantBaseline="text-before-edge"
                               fontFamily={s.font ?? FONTS[0]}
@@ -1986,6 +2068,24 @@ export function DesignEditor({
                               cur ? patch({ y: n }) : setPosition("y", n)
                             }
                           />
+                          {cur?.type === "polygon" && (
+                            <NumberField
+                              label={t(
+                                L(
+                                  "Число сторон",
+                                  "Polygon sides",
+                                  "Қабырға саны",
+                                ),
+                              )}
+                              value={cur.polygonSides ?? 6}
+                              min={3}
+                              max={24}
+                              disabled={cur.locked}
+                              onCommit={(n) =>
+                                patch({ polygonSides: Math.round(n) })
+                              }
+                            />
+                          )}
                           {cur?.type === "star" && (
                             <>
                               <NumberField
@@ -2082,6 +2182,93 @@ export function DesignEditor({
                               }
                               onBlur={finish}
                             />
+                          </label>
+                          <label className="dw-wide">
+                            <input
+                              type="checkbox"
+                              checked={!!cur?.fill2}
+                              disabled={!cur || allLocked}
+                              onChange={(e) =>
+                                patch({
+                                  fill2: e.target.checked
+                                    ? "#ffffff"
+                                    : undefined,
+                                })
+                              }
+                            />
+                            {t(
+                              L(
+                                "Градиентная заливка",
+                                "Gradient fill",
+                                "Градиентті бояу",
+                              ),
+                            )}
+                          </label>
+                          {cur?.fill2 && (
+                            <>
+                              <label>
+                                {t(
+                                  L(
+                                    "Второй цвет",
+                                    "Second color",
+                                    "Екінші түс",
+                                  ),
+                                )}
+                                <input
+                                  type="color"
+                                  className="dw-input"
+                                  value={cur.fill2}
+                                  disabled={cur.locked}
+                                  onFocus={begin}
+                                  onBlur={finish}
+                                  onChange={(e) =>
+                                    patch({ fill2: e.target.value }, true)
+                                  }
+                                />
+                              </label>
+                              <NumberField
+                                label={t(
+                                  L(
+                                    "Угол градиента",
+                                    "Gradient angle",
+                                    "Градиент бұрышы",
+                                  ),
+                                )}
+                                value={cur.gradientAngle ?? 0}
+                                min={0}
+                                max={360}
+                                disabled={cur.locked}
+                                onCommit={(n) => patch({ gradientAngle: n })}
+                              />
+                            </>
+                          )}
+                          <label>
+                            {t(
+                              L("Стиль обводки", "Stroke style", "Жиек стилі"),
+                            )}
+                            <select
+                              className="dw-input"
+                              value={cur?.strokeDash ?? "solid"}
+                              disabled={allLocked}
+                              onChange={(e) =>
+                                patch({
+                                  strokeDash: e.target
+                                    .value as Shape["strokeDash"],
+                                  strokeWidth: cur?.strokeWidth || 2,
+                                  stroke: cur?.stroke ?? "#000000",
+                                })
+                              }
+                            >
+                              <option value="solid">
+                                {t(L("Сплошная", "Solid", "Тұтас"))}
+                              </option>
+                              <option value="dashed">
+                                {t(L("Штриховая", "Dashed", "Үзік"))}
+                              </option>
+                              <option value="dotted">
+                                {t(L("Точки", "Dotted", "Нүкте"))}
+                              </option>
+                            </select>
                           </label>
                           <label>
                             {t(L("Обводка", "Stroke", "Жиек"))}

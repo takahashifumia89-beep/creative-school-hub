@@ -17,17 +17,11 @@ export function Settings({
     [newPassword, setNewPassword] = useState(""),
     [status, setStatus] = useState(""),
     [key, setKey] = useState(""),
-    [sessions, setSessions] = useState<
-      { current: boolean; expires_at: number }[]
-    >([]),
     [busy, setBusy] = useState(false);
   const [securityAction, setSecurityAction] = useState("password");
   useEffect(() => {
     void api<{ bio: string }>("/profile")
       .then((p) => setBio(p.bio ?? ""))
-      .catch((e) => setStatus(t(message(e))));
-    void api<typeof sessions>("/security/sessions")
-      .then(setSessions)
       .catch((e) => setStatus(t(message(e))));
   }, []);
   async function action(path: string) {
@@ -86,7 +80,7 @@ export function Settings({
       <p className="eyebrow">ACCOUNT / PRIVACY</p>
       <h1>{t(L("Настройки", "Settings", "Баптаулар"))}</h1>
       <p role="status">{status}</p>
-      <div className="grid2">
+      <div className="grid2" style={{ gridTemplateColumns: "1fr" }}>
         <form
           className="card"
           onSubmit={async (e) => {
@@ -122,28 +116,6 @@ export function Settings({
           </label>
           <button>{t(L("Сохранить", "Save", "Сақтау"))}</button>
         </form>
-        <div className="card">
-          <h2>
-            {t(L("Активные сессии", "Active sessions", "Белсенді сеанстар"))}
-          </h2>
-          {sessions.map((s, i) => (
-            <p key={i}>
-              {s.current
-                ? t(L("Это устройство", "This device", "Осы құрылғы"))
-                : t(L("Другая сессия", "Another session", "Басқа сеанс"))}{" "}
-              · {new Date(s.expires_at).toLocaleDateString()}
-            </p>
-          ))}
-          <p>
-            {t(
-              L(
-                "Выход со всех устройств требует текущий пароль.",
-                "Signing out all devices requires your current password.",
-                "Барлық құрылғыдан шығу үшін ағымдағы құпиясөз қажет.",
-              ),
-            )}
-          </p>
-        </div>
       </div>
       <details className="card">
         <summary style={{ cursor: "pointer", fontWeight: 600 }}>

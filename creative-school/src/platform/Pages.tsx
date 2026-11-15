@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useId } from "react";
 import { Link } from "wouter";
 import { api, download, message, type Project, type User } from "./client";
 import { L, useLocale } from "./locale";
 import { designSchema, sceneSchema } from "./schema";
 import { localBounds, polygonPoints } from "../features/studio/design-geometry";
 export function Preview({ project: p }: { project: Project }) {
+  const paintId = useId().replace(/[^a-zA-Z0-9]/g, "");
   if (p.kind === "design" && p.content) {
     try {
       const d = designSchema.parse(JSON.parse(p.content));
@@ -16,6 +17,24 @@ export function Preview({ project: p }: { project: Project }) {
           className="project-preview"
         >
           <rect width="100%" height="100%" fill={d.bg} />
+          <defs>
+            {d.shapes.map((s, i) =>
+              s.fill2 ? (
+                <linearGradient
+                  key={s.id}
+                  id={`${paintId}-paint-${i}`}
+                  x1="0%"
+                  y1="0%"
+                  x2="100%"
+                  y2="0%"
+                  gradientTransform={`rotate(${s.gradientAngle ?? 0} .5 .5)`}
+                >
+                  <stop offset="0%" stopColor={s.fill} />
+                  <stop offset="100%" stopColor={s.fill2} />
+                </linearGradient>
+              ) : null,
+            )}
+          </defs>
           {d.shapes
             .filter((s) => !s.hidden)
             .map((s) => {
@@ -32,6 +51,13 @@ export function Preview({ project: p }: { project: Project }) {
                   opacity={s.op ?? 1}
                   stroke={s.stroke ?? "none"}
                   strokeWidth={s.strokeWidth ?? 0}
+                  strokeDasharray={
+                    s.strokeDash === "dashed"
+                      ? "12 7"
+                      : s.strokeDash === "dotted"
+                        ? "2 6"
+                        : undefined
+                  }
                   transform={`rotate(${s.rot ?? 0} ${b.x + b.w / 2} ${b.y + b.h / 2})`}
                 >
                   {s.type === "rect" ? (
@@ -40,7 +66,11 @@ export function Preview({ project: p }: { project: Project }) {
                       y={s.y}
                       width={s.w}
                       height={s.h}
-                      fill={s.fill}
+                      fill={
+                        s.fill2
+                          ? `url(#${paintId}-paint-${d.shapes.indexOf(s)})`
+                          : s.fill
+                      }
                       rx={s.r}
                     />
                   ) : s.type === "ellipse" ? (
@@ -49,7 +79,11 @@ export function Preview({ project: p }: { project: Project }) {
                       cy={s.y + s.h / 2}
                       rx={s.w / 2}
                       ry={s.h / 2}
-                      fill={s.fill}
+                      fill={
+                        s.fill2
+                          ? `url(#${paintId}-paint-${d.shapes.indexOf(s)})`
+                          : s.fill
+                      }
                     />
                   ) : s.type === "text" ? (
                     <text
@@ -57,7 +91,11 @@ export function Preview({ project: p }: { project: Project }) {
                       y={s.y}
                       dominantBaseline="text-before-edge"
                       fontSize={s.size ?? 36}
-                      fill={s.fill}
+                      fill={
+                        s.fill2
+                          ? `url(#${paintId}-paint-${d.shapes.indexOf(s)})`
+                          : s.fill
+                      }
                       fontFamily={s.font ?? "Inter, sans-serif"}
                       fontWeight={s.bold ? 700 : 400}
                       fontStyle={s.italic ? "italic" : "normal"}
@@ -81,7 +119,14 @@ export function Preview({ project: p }: { project: Project }) {
                       ))}
                     </text>
                   ) : (
-                    <polygon points={polygonPoints(s)} fill={s.fill} />
+                    <polygon
+                      points={polygonPoints(s)}
+                      fill={
+                        s.fill2
+                          ? `url(#${paintId}-paint-${d.shapes.indexOf(s)})`
+                          : s.fill
+                      }
+                    />
                   )}
                 </g>
               );
