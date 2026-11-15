@@ -28,12 +28,12 @@ export class AssistantError extends Error {
 }
 const capabilities = {
   design:
-    "2D layout: rectangles, ellipses, triangles, diamonds, editable stars, pentagons, hexagons, octagons, arrows, crosses, parallelograms, trapezoids, multiline text; layers/locks/visibility; multi-selection, alignment/distribution, precise transforms, zoom/pan, snap/grid, templates, undo/redo, SVG/PNG/JSON. No raster placement, paths or Boolean operations.",
+    "2D layout: rectangles, ellipses, triangles, diamonds, editable stars, hearts, speech bubbles, shields, custom polygons, gradient fills and dashed strokes, pentagons, hexagons, octagons, arrows, crosses, parallelograms, trapezoids, multiline text; layers/locks/visibility; multi-selection, alignment/distribution, precise transforms, zoom/pan, snap/grid, templates, undo/redo, SVG/PNG/JSON. No raster placement, paths or Boolean operations.",
   "3d": "3D: primitive objects, hierarchy/locks, numeric position/rotation/dimensions, materials, camera views, snapping, convert primitive to mesh, individual vertex editing, local geometry-only OBJ import, OBJ/GLB/PNG/JSON export. No sculpting, UV editing, rigging or animation timeline.",
   image:
     "Photo: local PNG/JPEG/WebP source, draggable/numeric crop, rotation/flip, brightness/contrast/saturation/grayscale/sepia/blur, comparison, undo/redo, sized PNG/JPEG/WebP export (4096px maximum). No masks, RAW or advanced retouching.",
   video:
-    "Video: one sequence of clips plus soundtrack, composed preview, timeline seek/split/trim/reorder/duplicate, titles, clip volume, fades, brightness/contrast, undo/redo. Real-time 16:9 WebM export at 1280x720 or 720x405, maximum 10 minutes. No MP4 export, multitrack compositing, automatic subtitles or generative video.",
+    "Video: one sequence of clips plus soundtrack, composed preview, timeline seek/split/trim/reorder/duplicate, titles, clip volume, fades, brightness/contrast, undo/redo. Real-time 16:9 WebM export at 1280x720 or 720x405, maximum 10 minutes. No MP4 export, multitrack compositing, automatic speech transcription or generative video. Supports clip speed, portrait/square formats, zoom/pan/fit/flip, saturation, title styling, and manual or SRT/VTT captions burned into exported WebM.",
   notes:
     "Creative notes: plain text, autosave and JSON backup. Help plan creative briefs, shot lists, design concepts and project review.",
 };

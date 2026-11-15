@@ -13,7 +13,21 @@ export type DesignShape = {
     | "arrow"
     | "cross"
     | "parallelogram"
-    | "trapezoid";
+    | "trapezoid"
+    | "heart"
+    | "bubble"
+    | "chevron"
+    | "double-arrow"
+    | "lightning"
+    | "semicircle"
+    | "crescent"
+    | "shield"
+    | "tag"
+    | "bookmark"
+    | "pin"
+    | "burst"
+    | "polygon"
+    | "gear";
   x: number;
   y: number;
   w: number;
@@ -37,6 +51,10 @@ export type DesignShape = {
   letterSpacing?: number;
   starPoints?: number;
   innerRatio?: number;
+  polygonSides?: number;
+  fill2?: string;
+  gradientAngle?: number;
+  strokeDash?: "solid" | "dashed" | "dotted";
 };
 export function polygonPoints(s: DesignShape): string {
   let points: number[][];
@@ -92,6 +110,142 @@ export function polygonPoints(s: DesignShape): string {
         [0, 1],
       ];
       break;
+    case "heart":
+      points = Array.from({ length: 64 }, (_, i) => {
+        const t = (i * Math.PI * 2) / 64;
+        return [
+          16 * Math.sin(t) ** 3,
+          -(
+            13 * Math.cos(t) -
+            5 * Math.cos(2 * t) -
+            2 * Math.cos(3 * t) -
+            Math.cos(4 * t)
+          ),
+        ];
+      });
+      break;
+    case "bubble":
+      points = [
+        [0, 0],
+        [1, 0],
+        [1, 0.75],
+        [0.4, 0.75],
+        [0.2, 1],
+        [0.2, 0.75],
+        [0, 0.75],
+      ];
+      break;
+    case "chevron":
+      points = [
+        [0, 0],
+        [0.6, 0],
+        [1, 0.5],
+        [0.6, 1],
+        [0, 1],
+        [0.4, 0.5],
+      ];
+      break;
+    case "double-arrow":
+      points = [
+        [0, 0.5],
+        [0.27, 0],
+        [0.27, 0.3],
+        [0.73, 0.3],
+        [0.73, 0],
+        [1, 0.5],
+        [0.73, 1],
+        [0.73, 0.7],
+        [0.27, 0.7],
+        [0.27, 1],
+      ];
+      break;
+    case "lightning":
+      points = [
+        [0.45, 0],
+        [1, 0],
+        [0.65, 0.4],
+        [0.95, 0.4],
+        [0, 1],
+        [0.35, 0.55],
+        [0.1, 0.55],
+      ];
+      break;
+    case "semicircle":
+      points = Array.from({ length: 33 }, (_, i) => [
+        0.5 + 0.5 * Math.cos(Math.PI + (i * Math.PI) / 32),
+        0.5 + 0.5 * Math.sin(Math.PI + (i * Math.PI) / 32),
+      ]);
+      break;
+    case "crescent":
+      points = [
+        ...Array.from({ length: 33 }, (_, i) => {
+          const a = -Math.PI / 2 - (i * Math.PI) / 32;
+          return [0.5 + 0.5 * Math.cos(a), 0.5 + 0.5 * Math.sin(a)];
+        }),
+        ...Array.from({ length: 33 }, (_, i) => {
+          const a = Math.PI / 2 - (i * Math.PI) / 32;
+          return [0.5 - 0.25 * Math.cos(a), 0.5 + 0.5 * Math.sin(a)];
+        }),
+      ];
+      break;
+    case "shield":
+      points = [
+        [0, 0],
+        [1, 0],
+        [1, 0.55],
+        [0.85, 0.8],
+        [0.5, 1],
+        [0.15, 0.8],
+        [0, 0.55],
+      ];
+      break;
+    case "tag":
+      points = [
+        [0, 0],
+        [0.72, 0],
+        [1, 0.5],
+        [0.72, 1],
+        [0, 1],
+      ];
+      break;
+    case "bookmark":
+      points = [
+        [0, 0],
+        [1, 0],
+        [1, 1],
+        [0.5, 0.7],
+        [0, 1],
+      ];
+      break;
+    case "pin":
+      points = [
+        ...Array.from({ length: 37 }, (_, i) => {
+          const a = Math.PI * 0.75 + (i * Math.PI * 1.5) / 36;
+          return [0.5 + 0.35 * Math.cos(a), 0.35 + 0.35 * Math.sin(a)];
+        }),
+        [0.5, 1],
+      ];
+      break;
+    case "burst":
+    case "gear":
+      points = Array.from({ length: s.type === "gear" ? 48 : 24 }, (_, i) => {
+        const a = (i * Math.PI * 2) / (s.type === "gear" ? 48 : 24),
+          r = s.type === "gear" ? (i % 4 < 2 ? 1 : 0.82) : i % 2 ? 0.72 : 1;
+        return [Math.cos(a) * r, Math.sin(a) * r];
+      });
+      break;
+    case "polygon":
+      points = Array.from(
+        { length: Math.max(3, Math.min(24, Math.round(s.polygonSides ?? 6))) },
+        (_, i) => {
+          const a =
+            -Math.PI / 2 +
+            (i * Math.PI * 2) /
+              Math.max(3, Math.min(24, Math.round(s.polygonSides ?? 6)));
+          return [Math.cos(a), Math.sin(a)];
+        },
+      );
+      break;
     case "star":
     case "pentagon":
     case "hexagon":
@@ -131,6 +285,13 @@ export function polygonPoints(s: DesignShape): string {
         [0, 1],
       ];
   }
+  const xsAll = points.map((p) => p[0]),
+    ysAll = points.map((p) => p[1]),
+    left = Math.min(...xsAll),
+    top = Math.min(...ysAll),
+    width = Math.max(...xsAll) - left,
+    height = Math.max(...ysAll) - top;
+  points = points.map(([x, y]) => [(x - left) / width, (y - top) / height]);
   return points.map(([x, y]) => `${s.x + x * s.w},${s.y + y * s.h}`).join(" ");
 }
 export type Box = { x: number; y: number; w: number; h: number };

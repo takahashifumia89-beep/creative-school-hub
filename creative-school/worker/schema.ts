@@ -32,6 +32,11 @@ export const schemaStatements: string[] = [
   "INSERT OR IGNORE INTO badges SELECT owner_id,'projects',MAX(created_at) FROM projects GROUP BY owner_id HAVING COUNT(*)>=3;",
   "INSERT OR IGNORE INTO badges SELECT user_id,'level',MAX(created_at) FROM xp_events GROUP BY user_id HAVING SUM(xp)>=400;",
   "INSERT OR IGNORE INTO badges SELECT user_id,'publish',MIN(created_at) FROM xp_events WHERE kind='publish' GROUP BY user_id;",
+  "CREATE TABLE IF NOT EXISTS service_offers(id TEXT PRIMARY KEY,seller_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,title TEXT NOT NULL,description TEXT NOT NULL,category TEXT NOT NULL,price INTEGER NOT NULL,days INTEGER NOT NULL,revisions INTEGER NOT NULL,deliverables TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);",
+  "CREATE INDEX IF NOT EXISTS idx_service_offers ON service_offers(seller_id,active);",
+  "CREATE TABLE IF NOT EXISTS service_orders(id TEXT PRIMARY KEY,offer_id TEXT NOT NULL REFERENCES service_offers(id) ON DELETE CASCADE,buyer_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,seller_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,title TEXT NOT NULL,price INTEGER NOT NULL,days INTEGER NOT NULL,revisions INTEGER NOT NULL,deliverables TEXT NOT NULL,brief TEXT NOT NULL,contact TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',delivery_note TEXT NOT NULL DEFAULT '',version INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);",
+  "CREATE INDEX IF NOT EXISTS idx_service_orders_buyer ON service_orders(buyer_id,updated_at);",
+  "CREATE INDEX IF NOT EXISTS idx_service_orders_seller ON service_orders(seller_id,updated_at);",
 ];
 let upgrade: Promise<void> | null = null;
 export function ensureSchema(db: D1Database): Promise<void> {
@@ -46,7 +51,7 @@ async function apply(db: D1Database) {
     const row = await db
       .prepare("SELECT version FROM cs_schema WHERE id=1")
       .first<{ version: number }>();
-    if (row && row.version >= 5) return;
+    if (row && row.version >= 6) return;
   } catch {
     /* existing installation */
   }
@@ -84,6 +89,7 @@ async function apply(db: D1Database) {
     "0003_content.sql",
     "0004_progress.sql",
     "0005_platform.sql",
+    "0006_services.sql",
   ])
     await db
       .prepare("INSERT OR IGNORE INTO d1_migrations(name) VALUES(?)")
@@ -96,7 +102,7 @@ async function apply(db: D1Database) {
     .run();
   await db
     .prepare(
-      "INSERT INTO cs_schema VALUES(1,5) ON CONFLICT(id) DO UPDATE SET version=5",
+      "INSERT INTO cs_schema VALUES(1,6) ON CONFLICT(id) DO UPDATE SET version=6",
     )
     .run();
 }

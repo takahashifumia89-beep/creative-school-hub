@@ -25,8 +25,26 @@ export const designSchema = z.object({
           "cross",
           "parallelogram",
           "trapezoid",
+          "heart",
+          "bubble",
+          "chevron",
+          "double-arrow",
+          "lightning",
+          "semicircle",
+          "crescent",
+          "shield",
+          "tag",
+          "bookmark",
+          "pin",
+          "burst",
+          "polygon",
+          "gear",
         ]),
         starPoints: z.number().int().min(3).max(12).optional(),
+        polygonSides: z.number().int().min(3).max(24).optional(),
+        fill2: color.optional(),
+        gradientAngle: z.number().min(0).max(360).optional(),
+        strokeDash: z.enum(["solid", "dashed", "dotted"]).optional(),
         innerRatio: z.number().min(0.15).max(0.85).optional(),
         x: num,
         y: num,
@@ -100,6 +118,19 @@ export const videoSchema = z.object({
           fade: z.number().min(0).max(3).optional(),
           brightness: z.number().min(0).max(200).optional(),
           contrast: z.number().min(0).max(200).optional(),
+          speed: z.number().min(0.25).max(4).optional(),
+          fit: z.enum(["contain", "cover"]).optional(),
+          zoom: z.number().min(1).max(3).optional(),
+          panX: z.number().min(-1).max(1).optional(),
+          panY: z.number().min(-1).max(1).optional(),
+          flipX: z.boolean().optional(),
+          flipY: z.boolean().optional(),
+          saturation: z.number().min(0).max(200).optional(),
+          titleColor: color.optional(),
+          titleBackground: z.boolean().optional(),
+          titleSize: z.number().min(20).max(100).optional(),
+          titlePosition: z.enum(["top", "center", "bottom"]).optional(),
+          titleAlign: z.enum(["left", "center", "right"]).optional(),
         })
         .refine((c) => c.end > c.start && c.end <= c.duration),
     )
@@ -112,6 +143,23 @@ export const videoSchema = z.object({
     })
     .optional(),
   width: z.enum(["1280", "720"]),
+  aspect: z.enum(["wide", "portrait", "square"]).optional(),
+  fps: z
+    .union([z.literal(24), z.literal(25), z.literal(30), z.literal(60)])
+    .optional(),
+  captions: z
+    .array(
+      z
+        .object({
+          id: z.string().uuid(),
+          start: z.number().min(0).max(1000000),
+          end: z.number().positive().max(1000000),
+          text: z.string().min(1).max(300),
+        })
+        .refine((c) => c.end > c.start),
+    )
+    .max(200)
+    .optional(),
   bg: color,
 });
 export type ProjectKind = "design" | "3d" | "image" | "video" | "notes";
