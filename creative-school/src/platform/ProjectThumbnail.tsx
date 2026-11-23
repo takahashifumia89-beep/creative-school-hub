@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import type { DesignDoc } from "@/features/studio/DesignEditor";
-import type { ProjectMeta } from "./workspace";
+import type { Project } from "./client";
 import { api } from "./client";
 import { DesignArtwork } from "./DesignArtwork";
-export function ProjectThumbnail({ project }: { project: ProjectMeta }) {
+export function ProjectThumbnail({
+  project,
+  published = false,
+}: {
+  project: Pick<Project, "id" | "title" | "owner_id" | "version">;
+  published?: boolean;
+}) {
   const container = useRef<HTMLSpanElement>(null),
     [doc, setDoc] = useState<DesignDoc | null>(null);
   useEffect(() => {
@@ -14,7 +20,7 @@ export function ProjectThumbnail({ project }: { project: ProjectMeta }) {
       if (started) return;
       started = true;
       void api<{ preview: DesignDoc | null }>(
-        `/projects/${project.id}/preview`,
+        `${published ? "/public" : ""}/projects/${project.id}/preview`,
         "GET",
         undefined,
         controller.signal,
@@ -40,7 +46,7 @@ export function ProjectThumbnail({ project }: { project: ProjectMeta }) {
       observer.disconnect();
       controller.abort();
     };
-  }, [project.id, project.version, project.owner_id]);
+  }, [project.id, project.version, project.owner_id, published]);
   return (
     <span ref={container} className="cs-project-thumbnail">
       {doc && <DesignArtwork doc={doc} label={project.title} />}

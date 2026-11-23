@@ -8,7 +8,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import {
   ArrowLeft,
   Save,
@@ -71,9 +71,45 @@ export default function Studio({
   kind: ProjectKind;
   user: User;
 }) {
+  const projectId = new URLSearchParams(useSearch()).get("project");
+  const [route, setRoute] = useState(() => ({ id: projectId, revision: 0 }));
+  const created = useRef<{ id: string; revision: number } | null>(null);
+
+  if (route.id !== projectId) {
+    // Keep the editor and its undo/chat history only for the first save's URL update.
+    const firstSave =
+      route.id === null &&
+      created.current?.id === projectId &&
+      created.current.revision === route.revision;
+    setRoute({ id: projectId, revision: route.revision + (firstSave ? 0 : 1) });
+  }
+
+  return (
+    <StudioDocument
+      key={`${user.id}:${kind}:${route.revision}`}
+      kind={kind}
+      user={user}
+      id={projectId}
+      onCreate={(id) => {
+        created.current = { id, revision: route.revision };
+      }}
+    />
+  );
+}
+
+function StudioDocument({
+  kind,
+  user,
+  id,
+  onCreate,
+}: {
+  kind: ProjectKind;
+  user: User;
+  id: string | null;
+  onCreate: (id: string) => void;
+}) {
   const { t } = useLocale(),
     [, navigate] = useLocation();
-  const id = new URLSearchParams(window.location.search).get("project");
   const key = `cs-draft:${user.id}:${kind}:${id ?? "new"}`;
   const [draft, setDraft] = useState<Draft>({
     title: t(L("Без названия", "Untitled", "Атаусыз")),
@@ -95,7 +131,9 @@ export default function Studio({
     latest = useRef(draft),
     lock = useRef(false),
     created = useRef<string | null>(null),
-    creationKey = useRef("");
+    creationKey = useRef(""),
+    loadRequest = useRef<AbortController | null>(null),
+    saveRequest = useRef<AbortController | null>(null);
   saved.current ||= JSON.stringify(draft);
   creationKey.current ||= crypto.randomUUID();
   const [assistantConversation, setAssistantConversation] = useState(
@@ -125,10 +163,19 @@ export default function Studio({
     return value;
   }, [draft.content, kind]);
   const load = useCallback(async () => {
+    loadRequest.current?.abort();
+    const controller = new AbortController();
+    loadRequest.current = controller;
     setReady(false);
     setError("");
     try {
-      const p = await api<Project>(`/projects/${id}`);
+      const p = await api<Project>(
+        `/projects/${id}`,
+        "GET",
+        undefined,
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
       if (p.kind !== kind || !validDocument(kind, p.content))
         throw new ApiError("INVALID_DOCUMENT", 400);
       const d: Draft = {
@@ -144,9 +191,16 @@ export default function Studio({
       setBlocked(false);
       setReady(true);
     } catch (e) {
-      setError(t(message(e)));
+      if (!controller.signal.aborted) setError(t(message(e)));
     }
   }, [id, kind, t]);
+  useEffect(
+    () => () => {
+      loadRequest.current?.abort();
+      saveRequest.current?.abort();
+    },
+    [],
+  );
   useEffect(() => {
     if (id && created.current === id) {
       created.current = null;
@@ -165,6 +219,23 @@ export default function Studio({
       setReady(true);
     }
   }, [key]);
+  useEffect(
+    () => () => {
+      const current = latest.current;
+      const value = JSON.stringify(current);
+      if (value !== saved.current) {
+        try {
+          localStorage.setItem(
+            `cs-draft:${user.id}:${kind}:${current.id ?? "new"}`,
+            value,
+          );
+        } catch {
+          // The regular backup handler reports storage failures while mounted.
+        }
+      }
+    },
+    [user.id, kind],
+  );
   useEffect(() => {
     if (!ready || !dirty) return;
     const write = () => {
@@ -236,6 +307,8 @@ export default function Studio({
     )
       return;
     lock.current = true;
+    const controller = new AbortController();
+    saveRequest.current = controller;
     setSaving(true);
     const snapshot = latest.current;
     try {
@@ -243,7 +316,9 @@ export default function Studio({
         snapshot.id ? `/projects/${snapshot.id}` : "/projects",
         snapshot.id ? "PATCH" : "POST",
         { ...snapshot, kind, clientId: creationKey.current },
+        controller.signal,
       );
+      if (controller.signal.aborted) return;
       const d = {
         ...snapshot,
         id: p.id,
@@ -253,21 +328,34 @@ export default function Studio({
         content: p.content ?? snapshot.content,
       };
       saved.current = JSON.stringify(d);
-      setDraft((current) => ({ ...current, id: p.id, version: p.version }));
+      setDraft((current) => ({
+        ...current,
+        id: p.id,
+        version: p.version,
+        title: current.title === snapshot.title ? d.title : current.title,
+        description:
+          current.description === snapshot.description
+            ? d.description
+            : current.description,
+        content:
+          current.content === snapshot.content ? d.content : current.content,
+      }));
       setError("");
       try {
         localStorage.removeItem(key);
       } catch {}
       if (!snapshot.id) {
         created.current = p.id;
+        onCreate(p.id);
         navigate(`/studio/${kind}?project=${p.id}`, { replace: true });
       }
     } catch (e) {
+      if (controller.signal.aborted) return;
       setError(t(message(e)));
       if (e instanceof ApiError && e.status === 409) setBlocked(true);
     } finally {
       lock.current = false;
-      setSaving(false);
+      if (!controller.signal.aborted) setSaving(false);
     }
   }
   const saveRef = useRef(save);
@@ -372,6 +460,7 @@ export default function Studio({
           </label>
           <input
             id="studio-document-title"
+            disabled={!ready}
             maxLength={120}
             value={draft.title}
             onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}

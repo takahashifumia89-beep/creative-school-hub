@@ -4,12 +4,13 @@ import {
   ArrowUpRight,
   Check,
   Copy,
+  Download,
   LoaderCircle,
   Shuffle,
   Sparkles,
 } from "lucide-react";
-import { Link, useLocation } from "wouter";
-import { api, message, type Project } from "./client";
+import { Link, useLocation, useSearch } from "wouter";
+import { api, download, message, type Project } from "./client";
 import { L, useLocale } from "./locale";
 import { useSession } from "./session";
 import { SparkArtwork } from "./SparkArtwork";
@@ -21,18 +22,43 @@ import {
   sparkFormats,
   sparkHref,
   sparkPalettes,
+  sparkParams,
   sparkStyles,
   type SparkConfig,
 } from "./spark";
 import "./spark.css";
 
+const draftKey = "cs-spark-tab-draft";
+function readTabDraft() {
+  try {
+    return new URLSearchParams(sessionStorage.getItem(draftKey) ?? "");
+  } catch {
+    return new URLSearchParams();
+  }
+}
+
 export default function SparkPage() {
+  const search = useSearch();
+  return <SparkComposer key={search} search={search} />;
+}
+
+function SparkComposer({ search }: { search: string }) {
   const { t, lang } = useLocale(),
     session = useSession(),
     [, navigate] = useLocation();
+  const [saved] = useState(readTabDraft);
+  const resumesDraft =
+    !search ||
+    saved.get("source") === search ||
+    saved.get("current") === search;
   const [config, setConfig] = useState(() =>
-      readSpark(window.location.search, lang),
+      readSpark((resumesDraft && saved.get("current")) || search, lang),
     ),
+    [baseline, setBaseline] = useState<SparkConfig | null>(() => {
+      const value = resumesDraft && saved.get("baseline");
+      return value ? readSpark(value, lang) : null;
+    }),
+    [exporting, setExporting] = useState(false),
     [pending, setPending] = useState(false),
     [error, setError] = useState(""),
     [share, setShare] = useState(""),
@@ -52,6 +78,18 @@ export default function SparkPage() {
   useEffect(() => {
     setChecks([]);
   }, [config.brief]);
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams({
+        source: search,
+        current: sparkParams(config),
+      });
+      if (baseline) params.set("baseline", sparkParams(baseline));
+      sessionStorage.setItem(draftKey, params.toString());
+    } catch {
+      // The workshop works even if storage is unavailable.
+    }
+  }, [config, baseline, search]);
   function change(values: Partial<SparkConfig>) {
     setConfig((c) => ({ ...c, ...values }));
     setShare("");
@@ -78,6 +116,28 @@ export default function SparkPage() {
         ].id,
       seed: values[2] % 9999,
     });
+  }
+  async function exportPng() {
+    setExporting(true);
+    setError("");
+    try {
+      const { renderSparkPng } = await import("./spark-export");
+      const name =
+        config.title.trim().replace(/[\\/:*?"<>|\s]+/g, "-") || "spark";
+      download(`${name}.png`, await renderSparkPng(doc));
+    } catch {
+      setError(
+        t(
+          L(
+            "Не удалось скачать постер. Попробуйте ещё раз.",
+            "The poster could not be downloaded. Try again.",
+            "Постерді жүктеп алу мүмкін болмады. Қайталап көріңіз.",
+          ),
+        ),
+      );
+    } finally {
+      setExporting(false);
+    }
   }
   async function openEditor() {
     if (pending || !config.title.trim()) return;
@@ -174,18 +234,6 @@ export default function SparkPage() {
           )}
         </p>
       </div>
-      <div className="spark-step-line">
-        <span>
-          01 — {t(L("Поймайте идею", "Find an idea", "Идеяны табыңыз"))}
-        </span>
-        <span>
-          02 —{" "}
-          {t(L("Поиграйте с формой", "Play with the form", "Пішінмен ойнаңыз"))}
-        </span>
-        <span>
-          03 — {t(L("Сделайте своей", "Make it yours", "Өзіңізше жасаңыз"))}
-        </span>
-      </div>
       <section
         className="spark-composer"
         id="spark-composer"
@@ -199,11 +247,47 @@ export default function SparkPage() {
               {doc.w} × {doc.h}
             </span>
           </div>
-          <div className={`spark-canvas spark-format-${config.format}`}>
-            <SparkArtwork
-              config={config}
-              label={t(L("Ваш постер", "Your poster", "Сіздің постеріңіз"))}
-            />
+          <div
+            className={`spark-canvas spark-format-${config.format}${baseline ? " spark-canvas-comparing" : ""}`}
+          >
+            {baseline && (
+              <figure className={`spark-proof spark-format-${baseline.format}`}>
+                <figcaption>
+                  A ·{" "}
+                  {t(
+                    L(
+                      "Отложенный вариант",
+                      "Saved comparison",
+                      "Сақталған нұсқа",
+                    ),
+                  )}
+                </figcaption>
+                <SparkArtwork
+                  config={baseline}
+                  label={t(
+                    L(
+                      "Отложенный постер",
+                      "Saved comparison poster",
+                      "Сақталған постер",
+                    ),
+                  )}
+                />
+              </figure>
+            )}
+            <figure className="spark-proof spark-current-proof">
+              {baseline && (
+                <figcaption>
+                  B ·{" "}
+                  {t(
+                    L("Текущий вариант", "Current variation", "Ағымдағы нұсқа"),
+                  )}
+                </figcaption>
+              )}
+              <SparkArtwork
+                config={config}
+                label={t(L("Ваш постер", "Your poster", "Сіздің постеріңіз"))}
+              />
+            </figure>
           </div>
           <div className="spark-canvas-footer">
             <span>
@@ -212,16 +296,48 @@ export default function SparkPage() {
                 L("редактируемых слоёв", "editable layers", "өңделетін қабат"),
               )}
             </span>
-            <span>
-              {t(
-                L(
-                  "Всё можно изменить",
-                  "Everything is editable",
-                  "Бәрін өзгертуге болады",
-                ),
-              )}{" "}
-              ↗
-            </span>
+          </div>
+          <div className="spark-compare-actions">
+            {baseline ? (
+              <>
+                <button
+                  disabled={pending}
+                  onClick={() => {
+                    change(baseline);
+                    setBaseline(config);
+                  }}
+                >
+                  {t(
+                    L("Поменять A и B", "Swap A and B", "A мен B-ні ауыстыру"),
+                  )}
+                </button>
+                <button onClick={() => setBaseline(null)}>
+                  {t(
+                    L(
+                      "Закрыть сравнение",
+                      "Close comparison",
+                      "Салыстыруды жабу",
+                    ),
+                  )}
+                </button>
+              </>
+            ) : (
+              <button onClick={() => setBaseline(config)}>
+                {t(
+                  L(
+                    "Сравнить два варианта",
+                    "Compare two variations",
+                    "Екі нұсқаны салыстыру",
+                  ),
+                )}
+              </button>
+            )}
+            <button disabled={exporting} onClick={() => void exportPng()}>
+              <Download size={14} />
+              {exporting
+                ? t(L("Готовим PNG…", "Preparing PNG…", "PNG дайындалуда…"))
+                : t(L("Скачать PNG", "Download PNG", "PNG жүктеп алу"))}
+            </button>
           </div>
         </div>
         <div className="spark-controls">
