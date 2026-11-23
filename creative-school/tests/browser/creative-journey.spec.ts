@@ -4,6 +4,7 @@ import {
   type APIRequestContext,
   type Page,
 } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 const password = "Long-test-password-2026!";
 async function account(request: APIRequestContext, page?: Page) {
   const response = await request.post("/api/auth/signup", {
@@ -264,4 +265,200 @@ test("live art, briefs, shared variations and three languages work on desktop an
     path: "work/creative-spark-mobile.png",
     fullPage: true,
   });
+});
+
+test("guest can keep, compare and swap poster variations and download the current one", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/spark?brief=sound");
+  const title = page.getByLabel("Главные слова", { exact: true });
+  await title.fill("ПЕРВЫЙ ВАРИАНТ");
+  await page.getByRole("button", { name: "Сравнить два варианта" }).click();
+  await title.fill("ВТОРОЙ ВАРИАНТ");
+  await page.getByLabel("Формат", { exact: true }).selectOption("square");
+  await page.reload();
+  await expect(title).toHaveValue("ВТОРОЙ ВАРИАНТ");
+  await expect(
+    page.getByRole("img", { name: "Отложенный постер" }),
+  ).toHaveAttribute("viewBox", "0 0 720 960");
+  await page.getByRole("button", { name: "Поменять A и B" }).click();
+  await expect(title).toHaveValue("ПЕРВЫЙ ВАРИАНТ");
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Скачать PNG" }).click();
+  const downloaded = await downloadPromise;
+  expect(downloaded.suggestedFilename()).toBe("ПЕРВЫЙ-ВАРИАНТ.png");
+  const png = await readFile((await downloaded.path())!);
+  expect(png.subarray(1, 4).toString()).toBe("PNG");
+  expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([1440, 1920]);
+  await expect(
+    page.getByRole("button", { name: "Войти и открыть в студии" }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(390);
+  await page.screenshot({
+    path: "work/spark-comparison-mobile.png",
+    fullPage: false,
+  });
+});
+
+test("portfolio loads metadata and visible covers, then opens a structured case with the full source", async ({
+  page,
+  request,
+}) => {
+  const a = await account(request);
+  const content = JSON.stringify({
+    bg: "#2736db",
+    w: 800,
+    h: 500,
+    shapes: [
+      {
+        id: "real-rect",
+        type: "rect",
+        x: 40,
+        y: 40,
+        w: 80,
+        h: 120,
+        fill: "#e6fd77",
+      },
+    ],
+  });
+  async function publish(title: string, visibility: string) {
+    const res = await request.post("/api/projects", {
+      headers: a.headers,
+      data: {
+        title,
+        kind: "design",
+        content,
+        description:
+          "Задача:\nПередать ритм города.\n\nМоё решение:\nРабота с контрастом.\n\nРезультат и вывод:",
+      },
+    });
+    expect(res.status()).toBe(201);
+    const project = await res.json();
+    expect(
+      (
+        await request.patch(`/api/projects/${project.id}`, {
+          headers: a.headers,
+          data: { version: 1, status: "published", visibility },
+        })
+      ).status(),
+    ).toBe(200);
+    return project.id;
+  }
+  const pub = await publish("Городской ритм", "public");
+  const unlisted = await publish("По личной ссылке", "unlisted");
+  const galleryPath = `/api/public/profiles/${a.user.id}`;
+  const gallery = await (
+    await request.get(`${galleryPath}?view=gallery`, {
+      headers: { Cookie: "" },
+    })
+  ).json();
+  expect(gallery.projects).toHaveLength(1);
+  expect(gallery.projects[0]).not.toHaveProperty("content");
+  expect(
+    (
+      await request.get(`/api/public/projects/${unlisted}/preview`, {
+        headers: { Cookie: "" },
+      })
+    ).status(),
+  ).toBe(404);
+  let fail = true;
+  await page.route(`**${galleryPath}?*`, (route) => {
+    if (fail) {
+      fail = false;
+      return route.fulfill({ status: 503, json: { error: "SERVER_ERROR" } });
+    }
+    return route.continue();
+  });
+  const openedSources: string[] = [];
+  page.on("request", (req) => {
+    const path = new URL(req.url()).pathname;
+    if (/^\/api\/public\/projects\/[^/]+$/.test(path)) openedSources.push(path);
+  });
+  await page.goto(`/u/${a.user.id}`);
+  await page.getByRole("button", { name: "Повторить", exact: true }).click();
+  await expect(
+    page.getByRole("img", { name: "Городской ритм", exact: true }),
+  ).toBeVisible();
+  expect(openedSources).toEqual([]);
+  await page
+    .getByRole("heading", { name: "Городской ритм", exact: true })
+    .getByRole("link")
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Моё решение", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Результат и вывод", exact: true }),
+  ).toHaveCount(0);
+  expect(openedSources).toEqual([`/api/public/projects/${pub}`]);
+  const downloadPromise = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "Скачать опубликованный исходник" })
+    .click();
+  const file = await downloadPromise;
+  expect(JSON.parse(await readFile((await file.path())!, "utf8")).content).toBe(
+    content,
+  );
+});
+
+test("studio ignores a late project response after a same-studio navigation", async ({
+  page,
+  request,
+}) => {
+  const a = await account(request, page);
+  async function note(title: string) {
+    const res = await request.post("/api/projects", {
+      headers: a.headers,
+      data: { title, kind: "notes", content: title },
+    });
+    expect(res.status()).toBe(201);
+    return (await res.json()).id as string;
+  }
+  const slow = await note("Opened first");
+  const fast = await note("Opened last");
+  let release!: () => void;
+  const responseGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(`**/api/projects/${slow}`, async (route) => {
+    const response = await route.fetch();
+    await responseGate;
+    await route.fulfill({ response });
+  });
+  try {
+    const firstRequest = page.waitForRequest(`**/api/projects/${slow}`);
+    await page.goto(`/studio/notes?project=${slow}`);
+    await firstRequest;
+    await page.evaluate(
+      (id) => history.pushState(null, "", `/studio/notes?project=${id}`),
+      fast,
+    );
+    const field = page.getByLabel("Название", { exact: true });
+    await expect(field).toHaveValue("Opened last");
+    release();
+    await page.locator(".studio-notes").fill("Changed last only");
+    await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+    await expect(page.locator(".studio-save-status")).toContainText(
+      "Сохранено",
+    );
+    expect(
+      (
+        await (
+          await request.get(`/api/projects/${slow}`, { headers: a.headers })
+        ).json()
+      ).content,
+    ).toBe("Opened first");
+    expect(
+      (
+        await (
+          await request.get(`/api/projects/${fast}`, { headers: a.headers })
+        ).json()
+      ).content,
+    ).toBe("Changed last only");
+  } finally {
+    release();
+  }
 });

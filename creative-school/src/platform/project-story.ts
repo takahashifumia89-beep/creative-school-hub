@@ -25,11 +25,13 @@ export function readStory(description: string): [string, string, string] {
   const found: { start: number; end: number; index: number }[] = [];
   for (let i = 0; i < 3; i++)
     for (const label of storyLabels[i]) {
-      const prefix = label + ":\n",
+      const prefix = label + ":",
         start = description.indexOf(prefix);
       if (
-        start === 0 ||
-        (start > 1 && description.slice(start - 2, start) === "\n\n")
+        (start === 0 ||
+          (start > 1 && description.slice(start - 2, start) === "\n\n")) &&
+        (description[start + prefix.length] === "\n" ||
+          start + prefix.length === description.length)
       )
         found.push({ start, end: start + prefix.length, index: i });
     }

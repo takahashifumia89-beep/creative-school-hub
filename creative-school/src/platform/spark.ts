@@ -226,17 +226,19 @@ export function readSpark(search: string, lang: Lang): SparkConfig {
     seed: number("seed", 0, 9999, 0),
   };
 }
+export function sparkParams(config: SparkConfig) {
+  return new URLSearchParams(
+    Object.entries(config).map(([key, value]) => [key, String(value)]),
+  ).toString();
+}
 export function sparkHref(config: SparkConfig) {
-  return (
-    "/spark?" +
-    new URLSearchParams(
-      Object.entries(config).map(([k, v]) => [k, String(v)]),
-    ).toString()
-  );
+  return `/spark?${sparkParams(config)}`;
 }
 
 /** Native design layers, shared by the live preview and the editable project. */
-export function buildSpark(config: SparkConfig): DesignDoc {
+export function buildSpark(
+  config: SparkConfig,
+): DesignDoc & { w: number; h: number } {
   const { w, h } =
     sparkFormats.find((f) => f.id === config.format) ?? sparkFormats[0];
   const p =

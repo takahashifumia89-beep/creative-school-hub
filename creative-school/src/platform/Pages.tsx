@@ -1,140 +1,47 @@
-import { useEffect, useState, useId, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Link } from "wouter";
 import { api, download, message, type Project, type User } from "./client";
 import { L, useLocale } from "./locale";
 import { designSchema, sceneSchema } from "./schema";
-import { localBounds, polygonPoints } from "../features/studio/design-geometry";
+import { DesignArtwork } from "./DesignArtwork";
+import { ProjectThumbnail } from "./ProjectThumbnail";
+import { PageLoading } from "./PageLoading";
+import { kindLabels } from "./workspace";
+import { readStory, storyLabels } from "./project-story";
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  Download,
+  Link2,
+  Palette,
+  Box,
+  Camera,
+  Clapperboard,
+  FileText,
+} from "lucide-react";
+type GalleryProject = Omit<Project, "content">;
+type Gallery = {
+  profile: { display_name: string; bio: string | null };
+  projects: GalleryProject[];
+  total: number;
+};
+const galleryIcons = {
+  design: Palette,
+  "3d": Box,
+  image: Camera,
+  video: Clapperboard,
+  notes: FileText,
+};
+
 export function Preview({ project: p }: { project: Project }) {
-  const paintId = useId().replace(/[^a-zA-Z0-9]/g, "");
   if (p.kind === "design" && p.content) {
     try {
-      const d = designSchema.parse(JSON.parse(p.content));
+      const doc = designSchema.parse(JSON.parse(p.content));
       return (
-        <svg
-          role="img"
-          aria-label={p.title}
-          viewBox={`0 0 ${d.w ?? 800} ${d.h ?? 500}`}
-          className="project-preview"
-        >
-          <rect width="100%" height="100%" fill={d.bg} />
-          <defs>
-            {d.shapes.map((s, i) =>
-              s.fill2 ? (
-                <linearGradient
-                  key={s.id}
-                  id={`${paintId}-paint-${i}`}
-                  x1="0%"
-                  y1="0%"
-                  x2="100%"
-                  y2="0%"
-                  gradientTransform={`rotate(${s.gradientAngle ?? 0} .5 .5)`}
-                >
-                  <stop offset="0%" stopColor={s.fill} />
-                  <stop offset="100%" stopColor={s.fill2} />
-                </linearGradient>
-              ) : null,
-            )}
-          </defs>
-          {d.shapes
-            .filter((s) => !s.hidden)
-            .map((s) => {
-              const b = localBounds(s);
-              const textX =
-                s.align === "center"
-                  ? s.x + b.w / 2
-                  : s.align === "right"
-                    ? s.x + b.w
-                    : s.x;
-              return (
-                <g
-                  key={s.id}
-                  opacity={s.op ?? 1}
-                  stroke={s.stroke ?? "none"}
-                  strokeWidth={s.strokeWidth ?? 0}
-                  strokeDasharray={
-                    s.strokeDash === "dashed"
-                      ? "12 7"
-                      : s.strokeDash === "dotted"
-                        ? "2 6"
-                        : undefined
-                  }
-                  transform={`rotate(${s.rot ?? 0} ${b.x + b.w / 2} ${b.y + b.h / 2})`}
-                >
-                  {s.type === "rect" ? (
-                    <rect
-                      x={s.x}
-                      y={s.y}
-                      width={s.w}
-                      height={s.h}
-                      fill={
-                        s.fill2
-                          ? `url(#${paintId}-paint-${d.shapes.indexOf(s)})`
-                          : s.fill
-                      }
-                      rx={s.r}
-                    />
-                  ) : s.type === "ellipse" ? (
-                    <ellipse
-                      cx={s.x + s.w / 2}
-                      cy={s.y + s.h / 2}
-                      rx={s.w / 2}
-                      ry={s.h / 2}
-                      fill={
-                        s.fill2
-                          ? `url(#${paintId}-paint-${d.shapes.indexOf(s)})`
-                          : s.fill
-                      }
-                    />
-                  ) : s.type === "text" ? (
-                    <text
-                      x={textX}
-                      y={s.y}
-                      dominantBaseline="text-before-edge"
-                      fontSize={s.size ?? 36}
-                      fill={
-                        s.fill2
-                          ? `url(#${paintId}-paint-${d.shapes.indexOf(s)})`
-                          : s.fill
-                      }
-                      fontFamily={s.font ?? "Inter, sans-serif"}
-                      fontWeight={s.bold ? 700 : 400}
-                      fontStyle={s.italic ? "italic" : "normal"}
-                      textAnchor={
-                        s.align === "center"
-                          ? "middle"
-                          : s.align === "right"
-                            ? "end"
-                            : "start"
-                      }
-                      letterSpacing={s.letterSpacing ?? 0}
-                    >
-                      {(s.text ?? "").split("\n").map((line, i) => (
-                        <tspan
-                          key={i}
-                          x={textX}
-                          y={s.y + i * (s.size ?? 36) * (s.lineHeight ?? 1.2)}
-                        >
-                          {line || "\u00a0"}
-                        </tspan>
-                      ))}
-                    </text>
-                  ) : (
-                    <polygon
-                      points={polygonPoints(s)}
-                      fill={
-                        s.fill2
-                          ? `url(#${paintId}-paint-${d.shapes.indexOf(s)})`
-                          : s.fill
-                      }
-                    />
-                  )}
-                </g>
-              );
-            })}
-        </svg>
+        <DesignArtwork doc={doc} label={p.title} className="project-preview" />
       );
     } catch {
-      /* invalid document */
+      // An older or invalid document can still be downloaded.
     }
   }
   if (p.kind === "3d" && p.content) {
@@ -191,157 +98,107 @@ export function PublicPage({
   id: string;
   kind: "profiles" | "projects";
 }) {
-  const { t } = useLocale(),
-    [data, setData] = useState<{
-      profile?: { display_name: string; bio: string };
-      projects: Project[];
-      total?: number;
-    } | null>(null),
-    [error, setError] = useState(""),
-    [moreError, setMoreError] = useState(""),
-    [loadingMore, setLoadingMore] = useState(false);
-  const request = useRef<AbortController | null>(null),
-    generation = useRef(0);
-  useEffect(() => {
-    const seq = ++generation.current,
-      controller = new AbortController();
+  return kind === "profiles" ? (
+    <PublicGallery key={id} id={id} />
+  ) : (
+    <PublicCase key={id} id={id} />
+  );
+}
+
+function PublicGallery({ id }: { id: string }) {
+  const { t } = useLocale();
+  const [data, setData] = useState<Gallery | null>(null);
+  const [offset, setOffset] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<ReturnType<typeof message> | null>(null);
+  const request = useRef<AbortController | null>(null);
+  async function load(pageOffset: number) {
+    request.current?.abort();
+    const controller = new AbortController();
     request.current = controller;
-    setData(null);
-    setMoreError("");
-    setLoadingMore(false);
-    setError("");
-    void api<
-      | Project
-      | { profile: { display_name: string; bio: string }; projects: Project[] }
-    >(`/public/${kind}/${id}`, "GET", undefined, controller.signal)
-      .then((r) => {
-        if (seq === generation.current)
-          setData("projects" in r ? r : { projects: [r] });
-      })
-      .catch((e) => {
-        if (!controller.signal.aborted && seq === generation.current)
-          setError(t(message(e)));
-      });
-    return () => {
-      generation.current++;
-      controller.abort();
-    };
-  }, [id, kind]);
-  async function loadMore() {
-    if (!data || loadingMore || kind !== "profiles") return;
-    const seq = generation.current;
-    setLoadingMore(true);
-    setMoreError("");
+    setLoading(true);
+    setError(null);
     try {
-      const next = await api<{ projects: Project[]; total: number }>(
-        `/public/profiles/${id}?offset=${data.projects.length}`,
+      const next = await api<Gallery>(
+        `/public/profiles/${id}?view=gallery&offset=${pageOffset}`,
         "GET",
         undefined,
-        request.current?.signal,
+        controller.signal,
       );
-      if (seq === generation.current)
-        setData((current) =>
-          current
-            ? {
-                ...current,
-                total: next.total,
-                projects: [
-                  ...current.projects,
-                  ...next.projects.filter(
-                    (p) => !current.projects.some((x) => x.id === p.id),
-                  ),
-                ],
-              }
-            : current,
-        );
+      if (controller.signal.aborted) return;
+      setData((previous) => {
+        if (!pageOffset || !previous) return next;
+        const seen = new Set(previous.projects.map((project) => project.id));
+        return {
+          ...next,
+          projects: [
+            ...previous.projects,
+            ...next.projects.filter((project) => !seen.has(project.id)),
+          ],
+        };
+      });
+      setOffset(pageOffset + next.projects.length);
     } catch (e) {
-      if (seq === generation.current && !request.current?.signal.aborted)
-        setMoreError(t(message(e)));
+      if (!controller.signal.aborted) setError(message(e));
     } finally {
-      if (seq === generation.current) setLoadingMore(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }
+  useEffect(() => {
+    void load(0);
+    return () => request.current?.abort();
+  }, [id]);
+
   return (
-    <section>
-      <p className="eyebrow">CREATIVE SCHOOL / PORTFOLIO</p>
-      {error ? (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      ) : !data ? (
-        <p>{t(L("Загрузка…", "Loading…", "Жүктелуде…"))}</p>
-      ) : (
+    <section className="cs-public-portfolio">
+      {data && (
         <>
-          <h1>{data.profile?.display_name ?? data.projects[0]?.title}</h1>
-          <p>{data.profile?.bio}</p>
-          <div
-            className={
-              kind === "projects" ? "cs-public-case" : "grid3 cs-public-gallery"
-            }
-          >
-            {data.projects.map((p) => (
-              <article className="card" key={p.id}>
-                <Preview project={p} />
-                <h2>
-                  <Link href={`/p/${p.id}`}>{p.title}</Link>
-                </h2>
-                {p.description && (
-                  <div className="cs-public-story">
-                    <span className="eyebrow">
-                      {t(
-                        L(
-                          "Слова автора",
-                          "In the creator’s words",
-                          "Автор сөзі",
-                        ),
-                      )}
-                    </span>
-                    <p>{p.description}</p>
-                  </div>
-                )}
-                <p>{p.kind.toUpperCase()}</p>
-                <button
-                  onClick={() =>
-                    download(
-                      `${p.title}.json`,
-                      JSON.stringify(
-                        { kind: p.kind, content: p.content, title: p.title },
-                        null,
-                        2,
-                      ),
-                    )
-                  }
-                >
-                  {t(
-                    L(
-                      "Скачать опубликованный исходник",
-                      "Download published source",
-                      "Жарияланған түпнұсқаны жүктеу",
-                    ),
-                  )}
-                </button>
-              </article>
-            ))}
-          </div>
-          {moreError && (
-            <p className="error" role="alert">
-              {moreError}
-            </p>
-          )}
-          {(data.total ?? 0) > data.projects.length && (
-            <button
-              className="cs-action cs-load-more"
-              disabled={loadingMore}
-              onClick={() => void loadMore()}
-            >
+          <header className="cs-gallery-intro">
+            <p className="eyebrow">
               {t(
-                loadingMore
-                  ? L("Загружаем…", "Loading…", "Жүктелуде…")
-                  : L("Показать ещё", "Show more", "Тағы көрсету"),
+                L("Портфолио автора", "Creator portfolio", "Автор портфолиосы"),
               )}
-            </button>
-          )}
-          {!data.projects.length && (
+            </p>
+            <h1>{data.profile.display_name}</h1>
+            {data.profile.bio && (
+              <p className="cs-gallery-bio">{data.profile.bio}</p>
+            )}
+          </header>
+          {data.projects.length ? (
+            <div className="cs-gallery-grid">
+              {data.projects.map((project) => {
+                const Icon = galleryIcons[project.kind];
+                return (
+                  <article className="cs-gallery-card" key={project.id}>
+                    <Link
+                      href={`/p/${project.id}`}
+                      className={`cs-gallery-cover cs-kind-${project.kind}`}
+                      aria-label={project.title}
+                    >
+                      <Icon size={32} aria-hidden="true" />
+                      {project.kind === "design" && (
+                        <ProjectThumbnail project={project} published />
+                      )}
+                    </Link>
+                    <div className="cs-gallery-card-body">
+                      <p>{t(kindLabels[project.kind])}</p>
+                      <h2>
+                        <Link href={`/p/${project.id}`}>
+                          {project.title}
+                          <ArrowUpRight size={17} />
+                        </Link>
+                      </h2>
+                      {project.description && (
+                        <p className="cs-gallery-summary">
+                          {readStory(project.description).find(Boolean)}
+                        </p>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
             <p>
               {t(
                 L(
@@ -352,9 +209,154 @@ export function PublicPage({
               )}
             </p>
           )}
+          {offset < data.total && !error && (
+            <button
+              disabled={loading}
+              className="cs-action cs-load-more"
+              onClick={() => void load(offset)}
+            >
+              {t(L("Показать ещё", "Show more", "Тағы көрсету"))}
+            </button>
+          )}
         </>
       )}
+      {loading && <PageLoading />}
+      {error && (
+        <PublicRetry text={t(error)} onRetry={() => void load(offset)} />
+      )}
     </section>
+  );
+}
+
+function PublicCase({ id }: { id: string }) {
+  const { t } = useLocale();
+  const [project, setProject] = useState<Project | null>(null);
+  const [error, setError] = useState<ReturnType<typeof message> | null>(null);
+  const [retry, setRetry] = useState(0);
+  const [link, setLink] = useState("");
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    setError(null);
+    void api<Project>(
+      `/public/projects/${id}`,
+      "GET",
+      undefined,
+      controller.signal,
+    )
+      .then((p) => {
+        if (!controller.signal.aborted) setProject(p);
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setError(message(e));
+      });
+    return () => controller.abort();
+  }, [id, retry]);
+  if (error)
+    return (
+      <PublicRetry text={t(error)} onRetry={() => setRetry((n) => n + 1)} />
+    );
+  if (!project) return <PageLoading />;
+  const p = project;
+  const story = readStory(p.description ?? "");
+  const structured = story[0] !== p.description || story.slice(1).some(Boolean);
+  async function share() {
+    const url = new URL(`/p/${p.id}`, location.origin).href;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+    } catch {
+      setLink(url);
+    }
+  }
+  return (
+    <article className="cs-public-portfolio cs-public-case">
+      <Link className="cs-case-back" href={`/u/${p.owner_id}`}>
+        <ArrowLeft size={16} />
+        {t(L("Портфолио автора", "Creator portfolio", "Автор портфолиосы"))}
+      </Link>
+      <header className="cs-gallery-intro">
+        <p className="eyebrow">{t(kindLabels[p.kind])}</p>
+        <h1>{p.title}</h1>
+      </header>
+      <Preview project={p} />
+      {p.description && (
+        <div className="cs-public-story">
+          {!structured ? (
+            <>
+              <h2>
+                {t(L("Слова автора", "In the creator’s words", "Автор сөзі"))}
+              </h2>
+              <p>{p.description}</p>
+            </>
+          ) : (
+            story.map(
+              (text, index) =>
+                text && (
+                  <section key={index}>
+                    <h2>{t(storyLabels[index])}</h2>
+                    <p>{text}</p>
+                  </section>
+                ),
+            )
+          )}
+        </div>
+      )}
+      <div className="cs-case-actions">
+        <button className="cs-action" onClick={() => void share()}>
+          <Link2 size={15} />
+          {t(
+            copied
+              ? L("Ссылка скопирована", "Link copied", "Сілтеме көшірілді")
+              : L("Поделиться работой", "Share this work", "Жұмыспен бөлісу"),
+          )}
+        </button>
+        <button
+          className="cs-action"
+          onClick={() =>
+            download(
+              `${p.title}.json`,
+              JSON.stringify(
+                { kind: p.kind, content: p.content, title: p.title },
+                null,
+                2,
+              ),
+            )
+          }
+        >
+          <Download size={15} />
+          {t(
+            L(
+              "Скачать опубликованный исходник",
+              "Download published source",
+              "Жарияланған түпнұсқаны жүктеу",
+            ),
+          )}
+        </button>
+      </div>
+      {link && (
+        <label className="cs-case-link">
+          {t(L("Ссылка на работу", "Project link", "Жұмыс сілтемесі"))}
+          <input
+            readOnly
+            value={link}
+            onFocus={(event) => event.target.select()}
+          />
+        </label>
+      )}
+    </article>
+  );
+}
+
+function PublicRetry({ text, onRetry }: { text: string; onRetry: () => void }) {
+  const { t } = useLocale();
+  return (
+    <div role="alert" className="cs-inline-error">
+      {text}
+      <button onClick={onRetry}>
+        {t(L("Повторить", "Retry", "Қайталау"))}
+      </button>
+    </div>
   );
 }
 export const resources = [

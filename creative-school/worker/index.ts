@@ -223,6 +223,24 @@ async function bodyOf(req: Request): Promise<Row> {
 }
 const projectCols =
   "id,owner_id,title,description,status,visibility,cover_url,category,kind,version,created_at,updated_at";
+function designPreview(project: { kind: string; content: string | null }) {
+  if (project.kind !== "design" || !project.content) return null;
+  try {
+    const parsed = designSchema.safeParse(JSON.parse(project.content));
+    if (!parsed.success) return null;
+    return {
+      ...parsed.data,
+      shapes: parsed.data.shapes
+        .filter((shape) => !shape.hidden)
+        .map((shape) => ({
+          ...shape,
+          ...(shape.text ? { text: shape.text.slice(0, 500) } : {}),
+        })),
+    };
+  } catch {
+    return null;
+  }
+}
 async function route(req: Request, env: Env): Promise<Response> {
   const db = env.DB,
     url = new URL(req.url),
@@ -352,16 +370,20 @@ async function route(req: Request, env: Env): Promise<Response> {
       return json({ recovery });
     }
   }
-  const raw = tokenFrom(req),
-    token = raw ? await hash(raw) : "";
-  const user = await db
-    .prepare(
-      "SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?",
-    )
-    .bind(token, Date.now())
-    .first<Row>();
-  if (path === "/api/me")
-    return user ? json({ user: publicUser(user) }) : fail("UNAUTHORIZED", 401);
+  const publicPreview = path.match(
+    /^\/api\/public\/projects\/([\w-]+)\/preview$/,
+  );
+  if (publicPreview && method === "GET") {
+    const project = await db
+      .prepare(
+        "SELECT kind,content FROM projects WHERE id=? AND status='published' AND visibility='public'",
+      )
+      .bind(publicPreview[1])
+      .first<{ kind: string; content: string | null }>();
+    return project
+      ? json({ preview: designPreview(project) })
+      : fail("NOT_FOUND", 404);
+  }
   const publicMatch = path.match(
     /^\/api\/public\/(profiles|projects)\/([\w-]+)$/,
   );
@@ -374,9 +396,13 @@ async function route(req: Request, env: Env): Promise<Response> {
         .bind(publicMatch[2])
         .first();
       if (!p) return fail("NOT_FOUND", 404);
+      const columns =
+        url.searchParams.get("view") === "gallery"
+          ? projectCols
+          : projectCols + ",content";
       const projects = await db
         .prepare(
-          `SELECT ${projectCols},content FROM projects WHERE owner_id=? AND status='published' AND visibility='public' ORDER BY updated_at DESC,id LIMIT 24 OFFSET ?`,
+          `SELECT ${columns} FROM projects WHERE owner_id=? AND status='published' AND visibility='public' ORDER BY updated_at DESC,id LIMIT 24 OFFSET ?`,
         )
         .bind(
           publicMatch[2],
@@ -409,6 +435,16 @@ async function route(req: Request, env: Env): Promise<Response> {
       .first();
     return p ? json(p) : fail("NOT_FOUND", 404);
   }
+  const raw = tokenFrom(req),
+    token = raw ? await hash(raw) : "";
+  const user = await db
+    .prepare(
+      "SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?",
+    )
+    .bind(token, Date.now())
+    .first<Row>();
+  if (path === "/api/me")
+    return user ? json({ user: publicUser(user) }) : fail("UNAUTHORIZED", 401);
   if (path === "/api/workspace-index" && method === "GET")
     return json(
       await workspaceIndex(
@@ -646,25 +682,7 @@ async function route(req: Request, env: Env): Promise<Response> {
       .bind(previewMatch[1], uid)
       .first<{ kind: string; content: string | null }>();
     if (!p) return fail("NOT_FOUND", 404);
-    if (p.kind !== "design" || !p.content) return json({ preview: null });
-    try {
-      const document = designSchema.safeParse(JSON.parse(p.content));
-      return json({
-        preview: document.success
-          ? {
-              ...document.data,
-              shapes: document.data.shapes
-                .filter((s) => !s.hidden)
-                .map((s) => ({
-                  ...s,
-                  ...(s.text ? { text: s.text.slice(0, 500) } : {}),
-                })),
-            }
-          : null,
-      });
-    } catch {
-      return json({ preview: null });
-    }
+    return json({ preview: designPreview(p) });
   }
   const pm = path.match(/^\/api\/projects\/([\w-]+)$/);
   if (pm) {
